@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DataDir              = "/Users/jiatongzhou/GolandProjects/my-toolbox/data/vocabulary_comparison"
+	DataDir              = "/Users/jiatongzhou/GolandProjects/mini-tools/data/vocabulary_comparison"
 	VocabFileName        = "vocab.csv"         // 待背单词表
 	LearnedVocabFileName = "learned_vocab.csv" // 已背单词表（自动维护，用于过滤）
 )
