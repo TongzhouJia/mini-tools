@@ -47,12 +47,15 @@ func main() {
 	var files []string
 	for _, e := range entries {
 		if e.IsDir() {
+			fmt.Printf("⏭️  跳过子文件夹（不处理嵌套层）：%s\n", e.Name())
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(e.Name()))
-		if ext == ".mp3" || ext == ".mp4" {
-			files = append(files, filepath.Join(dirPath, e.Name()))
+		if ext != ".mp3" && ext != ".mp4" {
+			fmt.Printf("⏭️  跳过非 MP3/MP4 文件：%s\n", e.Name())
+			continue
 		}
+		files = append(files, filepath.Join(dirPath, e.Name()))
 	}
 	sort.Strings(files)
 
