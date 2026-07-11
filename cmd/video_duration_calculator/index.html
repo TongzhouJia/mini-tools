@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Duration Calculator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --surface-color: #1e293b;
+            --primary-color: #3b82f6;
+            --primary-hover: #2563eb;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border-color: #334155;
+            --success-color: #10b981;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 2rem;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        
+        p.subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        input[type="text"], input[type="number"] {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: rgba(15, 23, 42, 0.5);
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+        
+        .number-input {
+            width: 100px;
+            flex: none !important;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+        
+        button:disabled {
+            background-color: var(--border-color);
+            cursor: not-allowed;
+            color: var(--text-secondary);
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            display: none;
+            margin-bottom: 2rem;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 12px;
+            background-color: var(--surface-color);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        /* Results Area */
+        .results-container {
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .summary-card {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .summary-stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .summary-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--success-color);
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+            background: var(--surface-color);
+            padding: 1rem;
+            border-radius: 8px;
+            flex-wrap: wrap;
+        }
+
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--surface-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: rgba(15, 23, 42, 0.5);
+            position: sticky;
+            top: 0;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .checkbox-cell {
+            width: 40px;
+        }
+
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-color);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Video Duration Calculator</h1>
+    <p class="subtitle">Quickly calculate total duration of your local video courses.</p>
+
+    <div class="input-group">
+        <input type="text" id="dirPath" placeholder="Enter absolute directory path (e.g., /Users/jiatongzhou/Documents/...)" value="/Users/jiatongzhou/Documents/我太想进步了🥺/RHCSA/complete-linux-training-course-to-get-your-dream-it-job">
+        <button id="scanBtn" onclick="startScan()">Scan Directory</button>
+    </div>
+
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <div class="progress-text">
+            <span id="progressStatus">Starting scan...</span>
+            <span id="progressCount">0 / 0</span>
+        </div>
+    </div>
+
+    <div class="results-container" id="resultsContainer">
+        
+        <div class="summary-card">
+            <div class="summary-stat">
+                <span class="summary-label">Selected Videos</span>
+                <span class="summary-value" id="selectedCount">0</span>
+            </div>
+            <div class="summary-stat">
+                <span class="summary-label">Total Duration</span>
+                <span class="summary-value" id="totalDuration">00:00:00</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <span>Select Range: </span>
+            <input type="number" id="rangeStart" class="number-input" placeholder="Start" min="1">
+            <span> to </span>
+            <input type="number" id="rangeEnd" class="number-input" placeholder="End" min="1">
+            <button onclick="applyRange()">Apply</button>
+            <button onclick="selectAll(true)" style="background: var(--surface-color); border: 1px solid var(--border-color); margin-left: auto;">Select All</button>
+            <button onclick="selectAll(false)" style="background: var(--surface-color); border: 1px solid var(--border-color);">Deselect All</button>
+        </div>
+
+        <div class="table-container">
+            <table id="videosTable">
+                <thead>
+                    <tr>
+                        <th class="checkbox-cell"><input type="checkbox" id="masterCheckbox" onclick="toggleAllCheckboxes(this)"></th>
+                        <th>#</th>
+                        <th>File Name</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody id="videosTableBody">
+                    <!-- Rows populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let allVideos = [];
+    let eventSource = null;
+
+    function formatDuration(seconds) {
+        if (!seconds || isNaN(seconds)) return "00:00:00";
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':');
+    }
+
+    function startScan() {
+        const path = document.getElementById('dirPath').value.trim();
+        if (!path) {
+            alert('Please enter a directory path');
+            return;
+        }
+
+        // Reset UI
+        document.getElementById('resultsContainer').style.display = 'none';
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('progressBar').style.width = '0%';
+        document.getElementById('progressStatus').textContent = 'Scanning directory...';
+        document.getElementById('progressCount').textContent = '';
+        document.getElementById('scanBtn').disabled = true;
+        
+        allVideos = [];
+
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        eventSource = new EventSource('/api/scan?path=' + encodeURIComponent(path));
+
+        eventSource.addEventListener('start', (e) => {
+            const data = JSON.parse(e.data);
+            document.getElementById('progressStatus').textContent = 'Processing videos...';
+            document.getElementById('progressCount').textContent = `0 / ${data.total}`;
+        });
+
+        eventSource.addEventListener('progress', (e) => {
+            const data = JSON.parse(e.data);
+            const percent = (data.current / data.total) * 100;
+            document.getElementById('progressBar').style.width = `${percent}%`;
+            document.getElementById('progressCount').textContent = `${data.current} / ${data.total}`;
+            document.getElementById('progressStatus').textContent = `Reading: ${data.file.name}`;
+        });
+
+        eventSource.addEventListener('done', (e) => {
+            const data = JSON.parse(e.data);
+            allVideos = data.videos;
+            eventSource.close();
+            
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('scanBtn').disabled = false;
+            
+            renderTable();
+        });
+
+        eventSource.addEventListener('error', (e) => {
+            const data = JSON.parse(e.data);
+            alert('Error: ' + data.message);
+            eventSource.close();
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('scanBtn').disabled = false;
+        });
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('videosTableBody');
+        tbody.innerHTML = '';
+
+        if (allVideos.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No video files found in this directory.</td></tr>`;
+            document.getElementById('resultsContainer').style.display = 'block';
+            return;
+        }
+
+        allVideos.forEach((video, index) => {
+            const tr = document.createElement('tr');
+            
+            // Checkbox
+            const tdCheck = document.createElement('td');
+            tdCheck.className = 'checkbox-cell';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'video-checkbox';
+            cb.dataset.index = index;
+            cb.dataset.duration = video.duration;
+            cb.checked = true; // Default selected
+            cb.addEventListener('change', calculateTotals);
+            tdCheck.appendChild(cb);
+            
+            // Index
+            const tdIndex = document.createElement('td');
+            tdIndex.textContent = index + 1;
+            
+            // Name
+            const tdName = document.createElement('td');
+            tdName.textContent = video.name;
+            tdName.title = video.path;
+            
+            // Duration
+            const tdDur = document.createElement('td');
+            tdDur.textContent = formatDuration(video.duration);
+
+            tr.appendChild(tdCheck);
+            tr.appendChild(tdIndex);
+            tr.appendChild(tdName);
+            tr.appendChild(tdDur);
+            
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('resultsContainer').style.display = 'block';
+        document.getElementById('masterCheckbox').checked = true;
+        
+        // Setup range inputs
+        document.getElementById('rangeStart').max = allVideos.length;
+        document.getElementById('rangeEnd').max = allVideos.length;
+
+        calculateTotals();
+    }
+
+    function calculateTotals() {
+        const checkboxes = document.querySelectorAll('.video-checkbox');
+        let totalSeconds = 0;
+        let count = 0;
+        let allChecked = true;
+        
+        checkboxes.forEach(cb => {
+            if (cb.checked) {
+                totalSeconds += parseFloat(cb.dataset.duration);
+                count++;
+            } else {
+                allChecked = false;
+            }
+        });
+
+        document.getElementById('selectedCount').textContent = count;
+        document.getElementById('totalDuration').textContent = formatDuration(totalSeconds);
+        
+        const masterCb = document.getElementById('masterCheckbox');
+        if (checkboxes.length > 0) {
+            masterCb.checked = allChecked;
+            masterCb.indeterminate = !allChecked && count > 0;
+        }
+    }
+
+    function toggleAllCheckboxes(masterCheckbox) {
+        const checkboxes = document.querySelectorAll('.video-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = masterCheckbox.checked;
+        });
+        calculateTotals();
+    }
+
+    function selectAll(check) {
+        const checkboxes = document.querySelectorAll('.video-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = check;
+        });
+        calculateTotals();
+    }
+
+    function applyRange() {
+        const start = parseInt(document.getElementById('rangeStart').value);
+        const end = parseInt(document.getElementById('rangeEnd').value);
+        
+        if (!start || !end || start > end || start < 1 || end > allVideos.length) {
+            alert('Please enter a valid range (1 to ' + allVideos.length + ')');
+            return;
+        }
+
+        const checkboxes = document.querySelectorAll('.video-checkbox');
+        checkboxes.forEach((cb, index) => {
+            // index is 0-based, start/end are 1-based
+            const pos = index + 1;
+            cb.checked = (pos >= start && pos <= end);
+        });
+        
+        calculateTotals();
+    }
+</script>
+</body>
+</html>
