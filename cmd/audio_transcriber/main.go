@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,25 +38,27 @@ func main() {
 		return
 	}
 
-	// 收集文件夹下所有 mp3 / mp4 文件
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		fmt.Println("读取文件夹失败:", err)
-		return
-	}
-
+	// 递归收集文件夹（含所有嵌套子文件夹）下的 mp3 / mp4 文件
 	var files []string
-	for _, e := range entries {
-		if e.IsDir() {
-			fmt.Printf("⏭️  跳过子文件夹（不处理嵌套层）：%s\n", e.Name())
-			continue
+	walkErr := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("⚠️  访问失败，跳过：%s（%v）\n", path, err)
+			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
 		if ext != ".mp3" && ext != ".mp4" {
-			fmt.Printf("⏭️  跳过非 MP3/MP4 文件：%s\n", e.Name())
-			continue
+			fmt.Printf("⏭️  跳过非 MP3/MP4 文件：%s\n", path)
+			return nil
 		}
-		files = append(files, filepath.Join(dirPath, e.Name()))
+		files = append(files, path)
+		return nil
+	})
+	if walkErr != nil {
+		fmt.Println("读取文件夹失败:", walkErr)
+		return
 	}
 	sort.Strings(files)
 
