@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>🎵 点歌台</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #14121a; color: #eee;
+    min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    padding: 18px 16px 12px;
+    background: rgba(20,18,26,.92); backdrop-filter: blur(12px);
+    border-bottom: 1px solid #2a2733;
+  }
+  h1 { margin: 0 0 10px; font-size: 20px; font-weight: 600; }
+  .now {
+    font-size: 14px; color: #b9a7ff; min-height: 20px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bar { display: flex; gap: 8px; margin-top: 12px; }
+  button {
+    font: inherit; font-size: 14px; color: #eee;
+    background: #2a2733; border: none; border-radius: 10px;
+    padding: 9px 16px; cursor: pointer;
+  }
+  button:active { opacity: .6; }
+  .stop { background: #4a2230; color: #ffb4c4; }
+  ul { list-style: none; margin: 0; padding: 8px 12px 40px; }
+  li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 14px; margin-bottom: 8px;
+    background: #1d1a26; border-radius: 12px;
+    cursor: pointer; transition: background .15s;
+  }
+  li:active { background: #2c2739; }
+  li.playing { background: linear-gradient(90deg, #3a2b63, #1d1a26); }
+  .idx { width: 26px; text-align: right; color: #6b6480; font-size: 13px; flex: none; }
+  .name { flex: 1; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tip { color: #6b6480; font-size: 13px; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎵 点歌台</h1>
+  <div class="now" id="now">😴 空闲中</div>
+  <div class="bar">
+    <button class="stop" onclick="stop()">⏹️ 停止</button>
+    <button onclick="load()">🔄 刷新</button>
+  </div>
+</header>
+<ul id="list"><li class="tip">⏳ 加载中…</li></ul>
+
+<script>
+let songs = [], current = "";
+
+function render() {
+  const list = document.getElementById('list');
+  if (!songs.length) { list.innerHTML = '<li class="tip">📭 没有找到歌曲</li>'; return; }
+  list.innerHTML = songs.map((s, i) =>
+    `<li class="${s.path.split('/').pop() === current ? 'playing' : ''}" data-i="${i}">
+       <span class="idx">${i + 1}</span>
+       <span class="name">${s.name.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</span>
+       <span>${s.path.split('/').pop() === current ? '🔊' : '▶️'}</span>
+     </li>`).join('');
+  document.getElementById('now').textContent = current ? '🔊 正在播放：' + current : '😴 空闲中';
+}
+
+document.getElementById('list').addEventListener('click', e => {
+  const li = e.target.closest('li[data-i]');
+  if (li) play(songs[+li.dataset.i]);
+});
+
+async function load() {
+  const r = await (await fetch('/api/songs')).json();
+  songs = r.songs || []; current = r.current || "";
+  render();
+}
+
+async function play(s) {
+  current = s.path.split('/').pop(); render();
+  const r = await (await fetch('/api/play?path=' + encodeURIComponent(s.path))).json();
+  if (!r.ok) { document.getElementById('now').textContent = r.message; current = ""; render(); return; }
+  current = r.current; render();
+}
+
+async function stop() {
+  await fetch('/api/stop');
+  current = ""; render();
+}
+
+// 定期同步一下播放状态（歌放完了会自动变空闲）
+setInterval(async () => {
+  try {
+    const r = await (await fetch('/api/status')).json();
+    if (r.current !== current) { current = r.current; render(); }
+  } catch (e) {}
+}, 2000);
+
+load();
+</script>
+</body>
+</html>
