@@ -22,14 +22,11 @@ var indexHTML []byte
 const (
 	defaultMusicDir = "/Users/jiatongzhou/Documents/musics"
 	defaultPort     = "8082"
-	// Clash Verge 的默认混合端口
-	defaultProxyPort = "7897"
 )
 
 var (
-	musicDir  string
-	port      string
-	proxyPort string
+	musicDir string
+	port     string
 )
 
 var audioExts = map[string]bool{
@@ -185,33 +182,6 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "current": p.now()})
 }
 
-// handlePAC 吐一个 PAC 脚本：内网直连，其它流量照旧走电脑上的代理。
-//
-// 手机把代理设成「自动 / Auto」+ 本接口地址后，既能点歌又不影响科学上网 ——
-// 手动代理模式下 iOS 没有 bypass 列表，全局模式的 Clash 又会把内网 IP 也甩给远端
-// 节点（远端当然连不到你家局域网），于是返回 502。
-func handlePAC(w http.ResponseWriter, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		host = r.Host
-	}
-	proxy := net.JoinHostPort(host, proxyPort)
-
-	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
-	fmt.Fprintf(w, `function FindProxyForURL(url, host) {
-  if (isPlainHostName(host)) return "DIRECT";
-  var ip = /^\d+\.\d+\.\d+\.\d+$/.test(host) ? host : dnsResolve(host);
-  if (!ip) return "PROXY %[1]s";
-  if (isInNet(ip, "10.0.0.0", "255.0.0.0")) return "DIRECT";
-  if (isInNet(ip, "172.16.0.0", "255.240.0.0")) return "DIRECT";
-  if (isInNet(ip, "192.168.0.0", "255.255.0.0")) return "DIRECT";
-  if (isInNet(ip, "127.0.0.0", "255.0.0.0")) return "DIRECT";
-  if (isInNet(ip, "169.254.0.0", "255.255.0.0")) return "DIRECT";
-  return "PROXY %[1]s";
-}
-`, proxy)
-}
-
 // lanIPs 列出所有可能给手机用的局域网 IPv4，
 // 跳过回环 / link-local / 代理软件的 fake-ip 网段 (198.18.0.0/15) 和点对点的 utun
 func lanIPs() []string {
@@ -253,7 +223,6 @@ func lanIPs() []string {
 func main() {
 	flag.StringVar(&musicDir, "dir", defaultMusicDir, "音乐目录")
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
-	flag.StringVar(&proxyPort, "proxy-port", defaultProxyPort, "电脑上代理软件的混合端口，供 /proxy.pac 使用")
 	flag.Parse()
 
 	abs, err := filepath.Abs(musicDir)
@@ -273,7 +242,6 @@ func main() {
 	http.HandleFunc("/api/play", cors(handlePlay))
 	http.HandleFunc("/api/stop", cors(handleStop))
 	http.HandleFunc("/api/status", cors(handleStatus))
-	http.HandleFunc("/proxy.pac", cors(handlePAC))
 
 	songs, _ := scanSongs()
 	fmt.Printf("🎵 点歌台已启动，共 %d 首歌 (%s)\n", len(songs), musicDir)
@@ -285,10 +253,7 @@ func main() {
 	for _, ip := range ips {
 		fmt.Printf("   手机:  http://%s:%s\n", ip, port)
 	}
-	fmt.Println("   💡 手机报 502 = 请求被电脑上的代理甩给了远端节点（全局模式常见）")
-	if len(ips) > 0 {
-		fmt.Printf("      手机代理改成「自动」并填: http://%s:%s/proxy.pac  → 内网直连，其它照旧走代理\n", ips[0], port)
-	}
+	fmt.Println("   💡 手机报 502 = 手机上的代理/VPN App 截了请求，把它关掉或给局域网网段加直连规则")
 
 	// 显式监听 IPv4 的 0.0.0.0，避免只开 IPv6 socket 时某些客户端连不上
 	ln, err := net.Listen("tcp4", "0.0.0.0:"+port)
