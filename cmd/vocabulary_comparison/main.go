@@ -17,10 +17,17 @@ import (
 )
 
 const (
-	DataDir              = "/Users/jiatongzhou/GolandProjects/mini-tools/data/vocabulary_comparison"
 	VocabFileName        = "vocab.csv"         // 待背单词表
 	LearnedVocabFileName = "learned_vocab.csv" // 已背单词表（自动维护，用于过滤）
 )
+
+// DataDir 默认取仓库里的相对路径（在仓库根目录跑即可），可用 VOCAB_DATA_DIR 覆盖。
+var DataDir = func() string {
+	if v := strings.TrimSpace(os.Getenv("VOCAB_DATA_DIR")); v != "" {
+		return v
+	}
+	return filepath.Join("data", "vocabulary_comparison")
+}()
 
 func main() {
 	// 尝试手动读取 .env 文件
@@ -35,12 +42,15 @@ func main() {
 		log.Fatal("❌ 环境变量 GEMINI_API_KEY 为空，请先在终端中执行 export GEMINI_API_KEY=\"你的Key\" 或在项目根目录的 .env 文件中设置。")
 	}
 
+	if err := os.MkdirAll(DataDir, 0o755); err != nil {
+		log.Fatalf("❌ 无法创建数据目录 %s: %v", DataDir, err)
+	}
 	vocabPath := filepath.Join(DataDir, VocabFileName)
 	learnedPath := filepath.Join(DataDir, LearnedVocabFileName)
 
 	// 1. 获取字幕文件路径
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("请输入字幕文件的完整路径 (例如 /Users/.../video.en-US.srt): ")
+	fmt.Print("请输入字幕文件的完整路径 (例如 ~/Videos/video.en-US.srt): ")
 	subPath, _ := reader.ReadString('\n')
 
 	// 完美解决 Mac 终端拖拽路径自带单引号/双引号/空格的问题

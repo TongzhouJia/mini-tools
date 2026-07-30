@@ -10,8 +10,16 @@ import (
 )
 
 func main() {
-	// 1. 设置下载根目录
-	baseDir := "/Users/jiatongzhou/Documents/yt-dlp"
+	// 1. 设置下载根目录（可用 YTDLP_DIR 环境变量覆盖）
+	baseDir := strings.TrimSpace(os.Getenv("YTDLP_DIR"))
+	if baseDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Println("无法确定主目录，请用 YTDLP_DIR 环境变量指定下载目录")
+			return
+		}
+		baseDir = filepath.Join(home, "手动选择-20260730", "Documents", "yt-dlp")
+	}
 
 	// 确保根目录存在
 	err := os.MkdirAll(baseDir, os.ModePerm)

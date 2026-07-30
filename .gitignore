@@ -13,6 +13,15 @@ vertex-*.json
 # 忽略编译后的二进制文件
 word_reader
 /translate_server
+# go build ./... 在仓库根目录留下的各工具二进制
+/adb_pusher
+/audio_transcriber
+/google_task_writter
+/music_player
+/tts_downloader
+/video_duration_calculator
+/videos_subtitles_downloader
+/vocabulary_comparison
 *.exe
 *.exe~
 *.dll

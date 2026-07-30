@@ -120,10 +120,14 @@ func insertTaskWithRetry(srv *tasks.Service, listId string, task *tasks.Task) er
 func main() {
 	ctx := context.Background()
 
-	// 1. 加载 Google API 凭据
-	b, err := os.ReadFile("credentials.json")
+	// 1. 加载 Google API 凭据（默认取仓库里的 data/google_task_writer/credentials.json）
+	credPath := strings.TrimSpace(os.Getenv("GOOGLE_TASKS_CREDENTIALS"))
+	if credPath == "" {
+		credPath = filepath.Join("data", "google_task_writer", "credentials.json")
+	}
+	b, err := os.ReadFile(credPath)
 	if err != nil {
-		log.Fatalf("无法读取 credentials.json: %v", err)
+		log.Fatalf("无法读取 %s: %v（可用 GOOGLE_TASKS_CREDENTIALS 指定路径）", credPath, err)
 	}
 
 	config, err := google.ConfigFromJSON(b, tasks.TasksScope)
@@ -138,11 +142,18 @@ func main() {
 	}
 
 	// 2. 本地文件路径
-	baseDir := "/Users/jiatongzhou/Public/Drop Box/学外语/alphabet_order_word"
+	// 原来写死在 macOS 的 Dropbox 里（~/Public/Drop Box/学外语）；那棵目录树 2026-07-30
+	// 从 Mac 拷进了仓库的 data/学外语（data/ 在 .gitignore 里，不进版本控制）。
+	// 需要时可用 LINGO_BASE_DIR 指向别处。
+	lingoBase := strings.TrimSpace(os.Getenv("LINGO_BASE_DIR"))
+	if lingoBase == "" {
+		lingoBase = filepath.Join("data", "学外语")
+	}
+	baseDir := filepath.Join(lingoBase, "alphabet_order_word")
 
 	files, err := os.ReadDir(baseDir)
 	if err != nil {
-		log.Fatalf("无法读取目录: %v", err)
+		log.Fatalf("无法读取目录 %s: %v", baseDir, err)
 	}
 
 	// 3. 遍历每个字母文件

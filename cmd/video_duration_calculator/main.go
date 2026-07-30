@@ -98,29 +98,30 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func getDuration(path string) float64 {
-	// mdls -name kMDItemDurationSeconds <file>
-	cmd := exec.Command("mdls", "-name", "kMDItemDurationSeconds", path)
+	// ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 <file>
+	// 原来用的是 macOS 的 mdls（Spotlight 元数据），Linux 上没有，换成 ffprobe。
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		return 0
 	}
 
-	output := strings.TrimSpace(out.String())
-	// Expected output: kMDItemDurationSeconds = 102.8
-	// Sometimes it might return "(null)" if it can't read it
-	parts := strings.Split(output, "=")
-	if len(parts) == 2 {
-		valStr := strings.TrimSpace(parts[1])
-		if valStr != "(null)" {
-			duration, err := strconv.ParseFloat(valStr, 64)
-			if err == nil {
-				return duration
-			}
-		}
+	// 正常输出就是一行秒数，比如 102.800000；取不到时可能是空串或 "N/A"
+	valStr := strings.TrimSpace(out.String())
+	if valStr == "" || valStr == "N/A" {
+		return 0
 	}
-	return 0
+	duration, err := strconv.ParseFloat(valStr, 64)
+	if err != nil {
+		return 0
+	}
+	return duration
 }
 
 func sendEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data interface{}) {

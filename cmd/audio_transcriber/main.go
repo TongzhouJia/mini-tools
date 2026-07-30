@@ -11,9 +11,49 @@ import (
 	"strings"
 )
 
-const modelPath = "/Users/jiatongzhou/whisper_models/ggml-large-v3-turbo.bin"
+// 模型路径和 whisper 可执行文件都可以用环境变量覆盖。
+var (
+	modelPath  = envOr("WHISPER_MODEL", defaultPath("手动选择-20260730", "whisper_models", "ggml-large-v3-turbo.bin"))
+	whisperBin = envOr("WHISPER_BIN", "whisper-cli")
+)
+
+// envOr 取环境变量，为空时回退到默认值。
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+// defaultPath 拼一个相对于用户主目录的默认路径。
+func defaultPath(elem ...string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(elem...)
+	}
+	return filepath.Join(append([]string{home}, elem...)...)
+}
+
+// checkDeps 开跑前先确认外部依赖都在，免得处理到一半才炸。
+func checkDeps() error {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return fmt.Errorf("❌ 找不到 ffmpeg，请先安装（用于抽取音轨）")
+	}
+	if _, err := exec.LookPath(whisperBin); err != nil {
+		return fmt.Errorf("❌ 找不到 %s，请先安装 whisper.cpp，或用 WHISPER_BIN 指定可执行文件路径", whisperBin)
+	}
+	if _, err := os.Stat(modelPath); err != nil {
+		return fmt.Errorf("❌ 找不到模型文件: %s\n   用 WHISPER_MODEL 环境变量指定实际位置", modelPath)
+	}
+	return nil
+}
 
 func main() {
+	if err := checkDeps(); err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("请输入包含 MP3/MP4 文件的文件夹路径: ")
 	line, err := reader.ReadString('\n')
@@ -122,7 +162,7 @@ func transcribe(inputPath, outputBase string) error {
 
 	// 2. 用 whisper-cli 识别，输出到与原文件同名的 .txt
 	fmt.Println("🗣️  正在语音转文字...")
-	whisperCmd := exec.Command("whisper-cli",
+	whisperCmd := exec.Command(whisperBin,
 		"-m", modelPath,
 		"-f", wavPath,
 		"-l", "auto",

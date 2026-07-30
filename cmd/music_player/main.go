@@ -19,10 +19,16 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
-const (
-	defaultMusicDir = "/Users/jiatongzhou/Documents/musics"
-	defaultPort     = "8082"
-)
+const defaultPort = "8082"
+
+// 默认音乐目录：~/Music，可用 -dir 覆盖。
+var defaultMusicDir = func() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "Music"
+	}
+	return filepath.Join(home, "Music")
+}()
 
 var (
 	musicDir string
@@ -39,7 +45,23 @@ type Song struct {
 	Path string `json:"path"`
 }
 
-// player 保证同一时刻只有一个 afplay 在放歌
+// playerCmd 挑一个能用的命令行播放器。
+// 原来写死 macOS 的 afplay，Linux 上没有；优先 mpv（本机实测可用），退到 ffplay，
+// 也可以用 AUDIO_PLAYER 环境变量指定（只给可执行文件名/路径，参数固定）。
+func playerCmd(path string) *exec.Cmd {
+	if bin := strings.TrimSpace(os.Getenv("AUDIO_PLAYER")); bin != "" {
+		return exec.Command(bin, path)
+	}
+	if bin, err := exec.LookPath("mpv"); err == nil {
+		return exec.Command(bin, "--no-video", "--really-quiet", path)
+	}
+	if bin, err := exec.LookPath("ffplay"); err == nil {
+		return exec.Command(bin, "-nodisp", "-autoexit", "-loglevel", "error", path)
+	}
+	return nil
+}
+
+// player 保证同一时刻只有一个播放器进程在放歌
 type player struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -68,7 +90,10 @@ func (p *player) play(path string) error {
 	defer p.mu.Unlock()
 	p.killLocked()
 
-	cmd := exec.Command("afplay", path)
+	cmd := playerCmd(path)
+	if cmd == nil {
+		return fmt.Errorf("找不到可用的播放器，请装 ffplay（ffmpeg）或 mpv，或用 AUDIO_PLAYER 指定")
+	}
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
