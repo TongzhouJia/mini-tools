@@ -18,7 +18,7 @@ func main() {
 			fmt.Println("无法确定主目录，请用 YTDLP_DIR 环境变量指定下载目录")
 			return
 		}
-		baseDir = filepath.Join(home, "手动选择-20260730", "Documents", "yt-dlp")
+		baseDir = filepath.Join(home, "Videos", "yt-dlp")
 	}
 
 	// 确保根目录存在

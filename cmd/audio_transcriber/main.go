@@ -13,7 +13,7 @@ import (
 
 // 模型路径和 whisper 可执行文件都可以用环境变量覆盖。
 var (
-	modelPath  = envOr("WHISPER_MODEL", defaultPath("手动选择-20260730", "whisper_models", "ggml-large-v3-turbo.bin"))
+	modelPath  = envOr("WHISPER_MODEL", defaultPath("ggml-large-v3.bin"))
 	whisperBin = envOr("WHISPER_BIN", "whisper-cli")
 )
 
