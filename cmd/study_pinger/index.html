@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>⏱ 时间都去哪了</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #14121a; color: #eee;
+    min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    padding: 18px 16px 14px;
+    background: rgba(20,18,26,.92); backdrop-filter: blur(12px);
+    border-bottom: 1px solid #2a2733;
+  }
+  h1 { margin: 0 0 12px; font-size: 20px; font-weight: 600; }
+  .bar { display: flex; gap: 8px; }
+  button {
+    font: inherit; font-size: 14px; color: #eee;
+    background: #2a2733; border: none; border-radius: 10px;
+    padding: 8px 16px; cursor: pointer; transition: background .15s;
+  }
+  button.on { background: #6c4ee0; }
+  main { padding: 16px 16px 48px; max-width: 720px; margin: 0 auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .card { background: #1d1a26; border-radius: 12px; padding: 14px 16px; }
+  .card .k { font-size: 12px; color: #8d86a0; margin-bottom: 6px; }
+  .card .v { font-size: 24px; font-weight: 600; }
+  .card .v small { font-size: 13px; font-weight: 400; color: #8d86a0; margin-left: 4px; }
+  .card.study .v { color: #7ee0a8; }
+  .card.idle .v { color: #ffb4c4; }
+  .card.switch .v { color: #f0c674; }
+
+  h2 { font-size: 15px; font-weight: 600; margin: 28px 0 12px; color: #b9a7ff; }
+  .hint { font-size: 12px; color: #8d86a0; line-height: 1.7; margin: 8px 0 0; }
+
+  .rows { display: flex; flex-direction: column; gap: 8px; }
+  .row { background: #1d1a26; border-radius: 10px; padding: 11px 14px; position: relative; overflow: hidden; }
+  .row .fill { position: absolute; inset: 0 auto 0 0; background: #2e2a3d; }
+  .row.idle .fill { background: #3a2430; }
+  .row .txt { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .row .tag { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .num { font-size: 13px; color: #b5aec7; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; gap: 12px; padding: 9px 2px; border-bottom: 1px solid #221f2c; font-size: 14px; }
+  li .t { color: #8d86a0; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  li .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li.miss .a { color: #6a6478; font-style: italic; }
+
+  .empty { color: #8d86a0; font-size: 14px; line-height: 1.8; background: #1d1a26; border-radius: 12px; padding: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⏱ 时间都去哪了</h1>
+  <div class="bar">
+    <button id="btn-today" class="on" onclick="load('today')">今天</button>
+    <button id="btn-week" onclick="load('week')">最近 7 天</button>
+  </div>
+</header>
+
+<main>
+  <div id="body"></div>
+</main>
+
+<script>
+let cur = 'today';
+
+function fmtMin(m) {
+  if (m < 60) return m + ' <small>分钟</small>';
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + ' <small>小时</small> ' + r + ' <small>分</small>';
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function render(st) {
+  const body = document.getElementById('body');
+
+  if (st.answered === 0) {
+    body.innerHTML = '<div class="empty">还没有采样数据。<br>' +
+      '采样器跑起来后，平均每 45 分钟会弹一次框——答几次之后这里就有东西看了。<br><br>' +
+      '💡 想立刻试试效果，用 <code>-now</code> 启动。</div>';
+    return;
+  }
+
+  const total = st.study_minutes + st.idle_minutes;
+  const focus = total > 0 ? Math.round(st.study_minutes * 100 / total) : 0;
+  const maxMin = Math.max(...st.buckets.map(b => b.minutes), 1);
+
+  let h = '<div class="cards">' +
+    '<div class="card study"><div class="k">在学</div><div class="v">' + fmtMin(st.study_minutes) + '</div></div>' +
+    '<div class="card idle"><div class="k">没在学</div><div class="v">' + fmtMin(st.idle_minutes) + '</div></div>' +
+    '<div class="card"><div class="k">专注率</div><div class="v">' + focus + '<small>%</small></div></div>' +
+    '<div class="card switch"><div class="k">主题切换</div><div class="v">' + st.switches + '<small>次</small></div></div>' +
+    '</div>';
+
+  h += '<p class="hint">采样了 ' + st.total + ' 次，答了 ' + st.answered + ' 次。' +
+    (st.total > st.answered ? '未答的 ' + (st.total - st.answered) + ' 次多半是人不在电脑前。' : '') +
+    '<br>时长是把每次采样覆盖的间隔累加出来的估计值，样本越多越准。</p>';
+
+  h += '<h2>时间花在哪了</h2><div class="rows">';
+  for (const b of st.buckets) {
+    h += '<div class="row' + (b.idle ? ' idle' : '') + '">' +
+      '<div class="fill" style="width:' + (b.minutes * 100 / maxMin) + '%"></div>' +
+      '<div class="txt"><span class="tag">' + esc(b.tag) + '</span>' +
+      '<span class="num">' + fmtMin(b.minutes).replace(/<\/?small>/g, '') + ' · ' + b.count + '次</span></div></div>';
+  }
+  h += '</div>';
+
+  h += '<h2>原始记录</h2><ul>';
+  for (const p of st.recent) {
+    const t = new Date(p.at);
+    const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    h += '<li' + (p.answered ? '' : ' class="miss"') + '><span class="t">' + hh + '</span>' +
+      '<span class="a">' + (p.answered ? esc(p.answer) : '未答') + '</span></li>';
+  }
+  h += '</ul>';
+
+  body.innerHTML = h;
+}
+
+async function load(range) {
+  cur = range;
+  document.getElementById('btn-today').className = range === 'today' ? 'on' : '';
+  document.getElementById('btn-week').className = range === 'week' ? 'on' : '';
+  try {
+    const r = await fetch('/api/stats?range=' + range);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById('body').innerHTML = '<div class="empty">❌ 连不上采样器，它还在跑吗？</div>';
+  }
+}
+
+load('today');
+setInterval(() => load(cur), 10000);
+</script>
+</body>
+</html>
