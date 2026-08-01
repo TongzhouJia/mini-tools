@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -53,13 +54,31 @@ var (
 	pingNow  bool
 
 	mu sync.Mutex // 护住 jsonl 文件的读写
+
+	// 采样器的心跳状态。没有它就只能靠「等了很久没弹」来猜死活，
+	// 而随机间隔本来就可能等 70 分钟——两者分不开人会以为程序坏了。
+	stateMu    sync.Mutex
+	nextPingAt time.Time
+	startedAt  = time.Now()
 )
+
+func setNextPing(t time.Time) {
+	stateMu.Lock()
+	nextPingAt = t
+	stateMu.Unlock()
+}
+
+func getNextPing() time.Time {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	return nextPingAt
+}
 
 // 采样间隔的上下界（分钟）。指数分布尾巴很长，不夹一下会出现 3 分钟连弹
 // 或者两小时不响的极端值。
 const (
 	minGapMin = 15
-	maxGapMin = 90
+	maxGapMin = 70
 )
 
 // zenity 等回答的上限。人不在电脑前时窗口会一直挂着，挂着就卡住整个循环，
@@ -161,6 +180,8 @@ func ask(prefill string) (string, bool) {
 
 type window struct{ startMin, endMin int }
 
+var activeWindow window
+
 // parseHours 解析 "09:00-23:00" 这种活动时段，时段外不打扰。
 func parseHours(s string) (window, error) {
 	parts := strings.Split(strings.TrimSpace(s), "-")
@@ -208,8 +229,9 @@ func pingLoop(w window) {
 	lastAt := time.Now()
 	for {
 		gap := nextGap()
-		fmt.Printf("⏳ 下一次采样：%s（%.0f 分钟后）\n",
-			time.Now().Add(gap).Format("15:04"), gap.Minutes())
+		next := time.Now().Add(gap)
+		setNextPing(next)
+		fmt.Printf("⏳ 下一次采样：%s（%.0f 分钟后）\n", next.Format("15:04"), gap.Minutes())
 		time.Sleep(gap)
 
 		now := time.Now()
@@ -254,6 +276,10 @@ type Bucket struct {
 }
 
 type Stats struct {
+	NextPing     string   `json:"next_ping"`  // 下次采样时间，用来确认采样器还活着
+	StartedAt    string   `json:"started_at"` // 采样器启动时间
+	Hours        string   `json:"hours"`      // 活动时段
+	InWindow     bool     `json:"in_window"`  // 此刻在不在活动时段内
 	Range        string   `json:"range"`
 	Total        int      `json:"total"`         // ping 总数
 	Answered     int      `json:"answered"`      // 答了的
@@ -371,6 +397,12 @@ func cors(h http.HandlerFunc) http.HandlerFunc {
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	st := computeStats(loadPings(), r.URL.Query().Get("range"))
+	if n := getNextPing(); !n.IsZero() {
+		st.NextPing = n.Format(time.RFC3339)
+	}
+	st.StartedAt = startedAt.Format(time.RFC3339)
+	st.Hours = hoursArg
+	st.InWindow = activeWindow.contains(time.Now())
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(st)
 }
@@ -382,6 +414,21 @@ func checkDeps() error {
 		return fmt.Errorf("找不到 zenity（弹框靠它）：sudo apt install zenity")
 	}
 	return nil
+}
+
+// acquireLock 拿数据目录里的排他锁，保证同一时间只有一个采样器在跑。
+// 没有这道锁的话，手动跑一个 + systemd 再跑一个 = 双倍弹框、两边抢同一个
+// jsonl 写、还会撞端口（已经因此崩过 299 次）。锁随进程退出自动释放。
+func acquireLock() (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(dataDir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 func main() {
@@ -408,7 +455,8 @@ func main() {
 		}
 	}
 	if hoursArg == "" {
-		hoursArg = "09:00-23:00"
+		// 23:00 截止太早了——他 23:09 还在学，那个时段的采样会被白白跳过
+		hoursArg = "09:00-24:00"
 		if s := strings.TrimSpace(os.Getenv("PINGER_HOURS")); s != "" {
 			hoursArg = s
 		}
@@ -421,9 +469,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ %v", err)
 	}
+	activeWindow = w
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("❌ 建不了数据目录 %s: %v", dataDir, err)
 	}
+
+	// 已经有一个在跑就安静退出。注意是 exit 0 而不是失败——
+	// 退成失败会让 systemd 的 Restart=on-failure 一直重启，正是之前崩 299 次的成因。
+	lock, err := acquireLock()
+	if err != nil {
+		fmt.Println("⏭️ 已经有一个采样器在跑了，这个就不启动了")
+		fmt.Printf("   统计页面: http://localhost:%s\n", port)
+		return
+	}
+	defer lock.Close()
 
 	fmt.Println("⏱ 学习采样器已启动")
 	fmt.Printf("   平均间隔: %.0f 分钟（随机 %d~%d 分钟，无法预判）\n", meanMin, minGapMin, maxGapMin)
@@ -452,11 +511,15 @@ func main() {
 	}))
 	http.HandleFunc("/api/stats", cors(handleStats))
 
+	// 采样才是核心功能，web 只是拿来看数据的。端口起不来就只警告，
+	// 采样循环照跑——之前这里是 log.Fatalf，附属功能把主功能一起杀了。
 	ln, err := net.Listen("tcp4", "127.0.0.1:"+port)
 	if err != nil {
-		log.Fatalf("❌ 端口 %s 占用或不可用: %v", port, err)
+		fmt.Printf("⚠️ 端口 %s 用不了（%v），统计页面开不了，但采样照常进行\n", port, err)
+		select {} // 守住采样 goroutine
 	}
 	if err := http.Serve(ln, nil); err != nil {
-		log.Fatal(err)
+		fmt.Printf("⚠️ 统计页面挂了: %v；采样照常进行\n", err)
+		select {}
 	}
 }

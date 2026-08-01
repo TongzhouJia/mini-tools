@@ -28,6 +28,12 @@
   button.on { background: #6c4ee0; }
   main { padding: 16px 16px 48px; max-width: 720px; margin: 0 auto; }
 
+  /* 间隔是随机的，等 70 分钟也可能是正常的——所以必须能一眼看到下次什么时候，
+     否则只能靠「等太久了」来猜程序死没死。 */
+  .status { margin-top: 10px; font-size: 12px; color: #8d86a0; }
+  .status b { color: #7ee0a8; font-weight: 500; }
+  .status.off b { color: #ffb4c4; }
+
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .card { background: #1d1a26; border-radius: 12px; padding: 14px 16px; }
   .card .k { font-size: 12px; color: #8d86a0; margin-bottom: 6px; }
@@ -64,6 +70,7 @@
     <button id="btn-today" class="on" onclick="load('today')">今天</button>
     <button id="btn-week" onclick="load('week')">最近 7 天</button>
   </div>
+  <div id="status" class="status"></div>
 </header>
 
 <main>
@@ -83,7 +90,22 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+function renderStatus(st) {
+  const el = document.getElementById('status');
+  const hhmm = s => { const d = new Date(s); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+  if (!st.next_ping) { el.className = 'status'; el.innerHTML = '⏱ 采样器运行中'; return; }
+  const mins = Math.max(0, Math.round((new Date(st.next_ping) - new Date()) / 60000));
+  if (!st.in_window) {
+    el.className = 'status off';
+    el.innerHTML = '💤 <b>不在活动时段</b>（' + esc(st.hours) + '），现在不会弹';
+    return;
+  }
+  el.className = 'status';
+  el.innerHTML = '⏱ 采样器运行中 · 下次约 <b>' + hhmm(st.next_ping) + '</b>（' + mins + ' 分钟后）· 间隔是随机的，15~70 分钟不等';
+}
+
 function render(st) {
+  renderStatus(st);
   const body = document.getElementById('body');
 
   if (st.answered === 0) {
