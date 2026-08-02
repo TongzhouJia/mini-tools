@@ -227,8 +227,16 @@ func nextGap() time.Duration {
 
 func pingLoop(w window) {
 	lastAt := time.Now()
+	first := true
 	for {
 		gap := nextGap()
+		if first {
+			// 冷启动先来一次短的。随机间隔最长能到 70 分钟，启动后干等这么久
+			// 没有任何动静，人只会以为程序死了（已经因此被怀疑两次）。
+			// 先弹一次自证还活着，之后再进入正常的随机节奏。
+			gap = time.Duration(2+rand.Intn(4)) * time.Minute
+			first = false
+		}
 		next := time.Now().Add(gap)
 		setNextPing(next)
 		fmt.Printf("⏳ 下一次采样：%s（%.0f 分钟后）\n", next.Format("15:04"), gap.Minutes())
