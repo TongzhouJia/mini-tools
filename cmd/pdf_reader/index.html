@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📖 本地 PDF 阅读器</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 24px;
+    font: 15px/1.6 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif;
+    background: #f6f6f7; color: #1c1c1e;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c1c1e; color: #f2f2f7; }
+    .card { background: #2c2c2e !important; }
+    a { color: #7ab7ff !important; }
+    input { background: #1c1c1e; color: #f2f2f7; border-color: #48484a !important; }
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .65; font-size: 13px; margin-bottom: 20px; }
+  .bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  input {
+    flex: 1; min-width: 220px; padding: 8px 12px; font-size: 14px;
+    border: 1px solid #d1d1d6; border-radius: 8px; background: #fff; color: inherit;
+  }
+  .card { background: #fff; border-radius: 10px; overflow: hidden; }
+  .row { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-top: 1px solid rgba(128,128,128,.18); }
+  .row:first-child { border-top: none; }
+  .row a { font-weight: 600; text-decoration: none; color: #0b62d6; }
+  .row a:hover { text-decoration: underline; }
+  .dir { opacity: .55; font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .size { opacity: .45; font-size: 12px; }
+  .empty { padding: 40px; text-align: center; opacity: .6; }
+  .tip { margin-top: 20px; font-size: 13px; opacity: .7; }
+  kbd {
+    font: 12px/1 ui-monospace, monospace; padding: 2px 5px;
+    border: 1px solid rgba(128,128,128,.4); border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+  <h1>📖 本地 PDF 阅读器</h1>
+  <div class="sub">
+    用 pdf.js 渲染，所以是一个<strong>正常网页</strong> —— 翻译插件、划词插件、油猴脚本都能用。
+    · <a href="/wrongbook">📕 看错题本</a>
+  </div>
+
+  <div class="bar">
+    <input id="q" type="search" placeholder="🔍 筛文件名…（支持路径片段）" autofocus>
+  </div>
+
+  <div class="card" id="list"><div class="empty">⏳ 扫描中…</div></div>
+
+  <div class="tip">
+    在 PDF 页面里：<kbd>Ctrl+Shift+S</kbd> 存错题 ·
+    <kbd>Ctrl+Shift+N</kbd> 带备注存 ·
+    <kbd>Ctrl+Shift+A</kbd> 开关 ·
+    <kbd>Ctrl+Shift+D</kbd> 诊断
+  </div>
+
+<script>
+  let all = [];
+
+  const human = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB'
+                     : n > 1024    ? (n / 1024).toFixed(0) + ' KB' : n + ' B';
+
+  function render(items) {
+    const box = document.getElementById('list');
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">🈳 没找到 PDF —— 换个目录试试：<code>-dir</code></div>';
+      return;
+    }
+    box.innerHTML = items.map((f) => `
+      <div class="row">
+        <a href="/read?f=${encodeURIComponent(f.rel)}">${esc(f.name)}</a>
+        <span class="size">${human(f.size)}</span>
+        <span class="dir">${esc(f.dir === '.' ? '' : f.dir)}</span>
+      </div>`).join('');
+  }
+
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  document.getElementById('q').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    render(!q ? all : all.filter((f) => f.rel.toLowerCase().includes(q)));
+  });
+
+  fetch('/api/files')
+    .then((r) => r.json())
+    .then((d) => { all = d || []; render(all); })
+    .catch((e) => {
+      document.getElementById('list').innerHTML =
+        '<div class="empty">❌ 列表拉不到：' + e.message + '</div>';
+    });
+</script>
+</body>
+</html>

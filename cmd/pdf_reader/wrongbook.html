@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📕 错题本</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 24px;
+    font: 15px/1.6 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif;
+    background: #f6f6f7; color: #1c1c1e;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c1c1e; color: #f2f2f7; }
+    .item { background: #2c2c2e !important; }
+    a { color: #7ab7ff !important; }
+    input { background: #1c1c1e; color: #f2f2f7; border-color: #48484a !important; }
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .65; font-size: 13px; margin-bottom: 20px; }
+  input {
+    width: 100%; max-width: 460px; padding: 8px 12px; font-size: 14px; margin-bottom: 16px;
+    border: 1px solid #d1d1d6; border-radius: 8px; background: #fff; color: inherit;
+  }
+  .item { background: #fff; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .text { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .ctx { font-size: 13px; opacity: .7; margin-bottom: 8px; }
+  .ctx mark { background: rgba(255, 214, 0, .35); color: inherit; padding: 0 2px; border-radius: 2px; }
+  .meta { font-size: 12px; opacity: .5; display: flex; gap: 12px; flex-wrap: wrap; }
+  .note { font-size: 13px; margin-bottom: 8px; }
+  .empty { padding: 40px; text-align: center; opacity: .6; }
+</style>
+</head>
+<body>
+  <h1>📕 错题本</h1>
+  <div class="sub">
+    存在 <code>data/pdf_reader/错题本.csv</code>，可以直接拿表格软件打开 ·
+    <a href="/">← 回文件列表</a>
+  </div>
+
+  <input id="q" type="search" placeholder="🔍 搜原文 / 上下文 / 备注 / 文件名…">
+  <div id="list"><div class="empty">⏳ 读取中…</div></div>
+
+<script>
+  let all = [];
+  const esc = (s) => (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  // 上下文里把原文高亮出来，扫一眼就知道当时选的是哪句
+  function highlight(ctx, text) {
+    const c = esc(ctx), t = esc(text);
+    if (!t || !c.includes(t)) return c;
+    return c.split(t).join('<mark>' + t + '</mark>');
+  }
+
+  function render(items) {
+    const box = document.getElementById('list');
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">🈳 还没存过错题 —— 在 PDF 里选中文字按 Ctrl+Shift+S</div>';
+      return;
+    }
+    box.innerHTML = items.slice().reverse().map((it) => `
+      <div class="item">
+        <div class="text">${esc(it.text)}</div>
+        ${it.context ? `<div class="ctx">${highlight(it.context, it.text)}</div>` : ''}
+        ${it.note ? `<div class="note">📝 ${esc(it.note)}</div>` : ''}
+        <div class="meta">
+          <span>🕐 ${esc(it.time)}</span>
+          <span>📄 ${esc(it.file)}</span>
+          <span>第 ${esc(it.page)} 页</span>
+        </div>
+      </div>`).join('');
+  }
+
+  document.getElementById('q').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    render(!q ? all : all.filter((it) =>
+      [it.text, it.context, it.note, it.file].join(' ').toLowerCase().includes(q)));
+  });
+
+  fetch('/api/wrong')
+    .then((r) => r.json())
+    .then((d) => { all = d || []; render(all); })
+    .catch((e) => {
+      document.getElementById('list').innerHTML = '<div class="empty">❌ 读不到：' + e.message + '</div>';
+    });
+</script>
+</body>
+</html>

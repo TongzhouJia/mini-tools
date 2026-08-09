@@ -18,6 +18,7 @@ word_reader
 /audio_transcriber
 /google_task_writter
 /music_player
+/pdf_reader
 /tts_downloader
 /video_duration_calculator
 /videos_subtitles_downloader
