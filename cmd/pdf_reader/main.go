@@ -112,6 +112,7 @@ func main() {
 	http.HandleFunc("/capture.js", handleCaptureJS)
 	http.HandleFunc("/wrongbook", handleWrongbookPage)
 	http.HandleFunc("/api/wrong", handleWrong)
+	http.HandleFunc("/api/highlights", handleHighlights)
 	http.HandleFunc("/api/translate", handleTranslate)
 	http.HandleFunc("/api/tts", handleTTS)
 	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(rootDir))))

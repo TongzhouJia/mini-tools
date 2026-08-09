@@ -1,24 +1,39 @@
-// capture.js —— 注入到 pdf.js viewer 里：划词存错题 / 翻译 / 朗读。
+// capture.js —— 注入到 pdf.js viewer 里：划词存错题 / 高亮 / 翻译 / 朗读。
 // 由 pdf_reader 在伺服 viewer.html 时塞进去，不是油猴脚本，改完重启工具就生效。
 //
-// 快捷键是单独字母（a / f / r / d），不带修饰键——阅读时不打字，按着顺手。
+// 快捷键是单独字母（a / s / f / r / d），不带修饰键——阅读时不打字，按着顺手。
 // 代价是要跟 pdf.js 自己的单键抢：r 是「旋转页面」、s 是选择工具、h 是抓手。
 // 处理办法见下面 onKey 里的两条规矩。
 (function () {
   'use strict';
 
   // ── 配置 ────────────────────────────────────────────────────────────
-  const CONTEXT_CHARS = 80; // 上下文往前后各抓多少字，觉得不够就改这个数
+  const CONTEXT_CHARS = 80;                       // 上下文往前后各抓多少字
+  const HL_COLOR = 'rgba(255, 214, 0, .45)';      // 高亮颜色，想标红就换成 rgba(255,0,0,.3)
+  const GTX_WAIT_MS = 1500;                       // 等谷歌翻译气泡冒出来的上限
+  const HL_OVERLAP = 0.3;                         // 重叠超过这个比例就当成「再按一次 = 取消高亮」
+
+  // 谷歌翻译插件那个喇叭按钮，多层兜底 —— 插件改版时至少还有下一层顶着
+  const GTX_SELECTORS = [
+    '.gtx-source-audio',
+    '.gtx-audio-button',
+    '[class*="gtx"][class*="audio"][role="button"]',
+  ];
 
   const KEYS = {
     a: 'wrong',     // 存错题本
-    f: 'translate', // 划词翻译
+    s: 'highlight', // 高亮
+    f: 'translate', // 翻译（备用，正常靠谷歌翻译插件自动弹）
     r: 'speak',     // 朗读
     d: 'debug',     // 诊断
   };
 
   let saved = 0;
+  let hls = [];      // 当前文件的全部高亮
   let audio = null;
+  let lastSpeakVia = '—';
+
+  const file = currentFile();
 
   // ── 当前在读哪个文件 ────────────────────────────────────────────────
   function currentFile() {
@@ -32,14 +47,10 @@
 
   // ── 选中了什么、在第几页、上下文是什么 ──────────────────────────────
   // pdf.js 的文字层是真 DOM：.page[data-page-number] 里套一层 .textLayer，
-  // 里面全是 <span>。所以从选区往上爬就能拿到页码。
-  function pageOf(node) {
+  // 里面全是 <span>。所以从选区往上爬就能拿到页码和页面容器。
+  function pageDivOf(node) {
     const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    const page = el && el.closest && el.closest('.page[data-page-number]');
-    if (page) return page.getAttribute('data-page-number');
-    // 兜底：读工具栏那个页码输入框
-    const input = document.getElementById('pageNumber');
-    return input ? input.value : '';
+    return (el && el.closest && el.closest('.page[data-page-number]')) || null;
   }
 
   function contextOf(node, text) {
@@ -61,18 +72,29 @@
   function grab() {
     const sel = window.getSelection();
     const text = sel ? String(sel).replace(/\s+/g, ' ').trim() : '';
-    if (!text) return null;
+    if (!text || !sel.rangeCount) return null;
     const node = sel.anchorNode;
-    return { text, page: pageOf(node), context: contextOf(node, text), file: currentFile() };
+    const pageDiv = pageDivOf(node);
+    const input = document.getElementById('pageNumber');
+    return {
+      text,
+      file,
+      pageDiv,
+      range: sel.getRangeAt(0),
+      page: pageDiv ? pageDiv.getAttribute('data-page-number') : (input ? input.value : ''),
+      context: contextOf(node, text),
+    };
   }
 
-  // ── 三个动作 ────────────────────────────────────────────────────────
+  // ── a：存错题本 ─────────────────────────────────────────────────────
   async function actWrong(item) {
     try {
       const res = await fetch('/api/wrong', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
+        body: JSON.stringify({
+          file: item.file, page: item.page, text: item.text, context: item.context,
+        }),
       });
       if (!res.ok) throw new Error((await res.text()).trim());
       const data = await res.json();
@@ -84,8 +106,114 @@
     }
   }
 
+  // ── s：高亮 ─────────────────────────────────────────────────────────
+  // 坐标一律换算成「占页面宽高的百分比」再存。存像素的话换个缩放级别就全错位了，
+  // 百分比跟缩放无关，重画时乘回当前页面尺寸即可。
+  function rectsOf(item) {
+    const pr = item.pageDiv.getBoundingClientRect();
+    if (!pr.width || !pr.height) return [];
+    return [...item.range.getClientRects()]
+      .filter((r) => r.width > 1 && r.height > 1)
+      .map((r) => ({
+        x: (r.left - pr.left) / pr.width,
+        y: (r.top - pr.top) / pr.height,
+        w: r.width / pr.width,
+        h: r.height / pr.height,
+      }))
+      // 跨页选中时另一页的矩形会落到 0..1 之外，丢掉——只高亮锚点所在这一页
+      .filter((r) => r.y > -0.02 && r.y < 1.02);
+  }
+
+  function overlaps(a, b) {
+    const ox = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    const oy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    const inter = ox * oy;
+    const small = Math.min(a.w * a.h, b.w * b.h) || 1;
+    return inter / small > HL_OVERLAP;
+  }
+
+  async function actHighlight(item) {
+    if (!item.pageDiv) return toast('⚠️ 定位不到页面，翻一下页再试');
+    const rects = rectsOf(item);
+    if (!rects.length) return toast('⚠️ 这段选区画不出高亮');
+    const page = parseInt(item.page, 10);
+
+    // 压在已有高亮上再按一次 = 取消掉它
+    const hit = hls.find((h) => h.page === page && h.rects.some((r) => rects.some((n) => overlaps(r, n))));
+    if (hit) {
+      try {
+        const res = await fetch('/api/highlights?id=' + encodeURIComponent(hit.id), { method: 'DELETE' });
+        if (!res.ok) throw new Error((await res.text()).trim());
+        hls = hls.filter((h) => h.id !== hit.id);
+        drawPage(item.pageDiv);
+        window.getSelection().removeAllRanges();
+        toast('🧽 高亮去掉了');
+      } catch (e) {
+        toast('❌ 删不掉：' + e.message);
+      }
+      return;
+    }
+
+    const h = { file: item.file, page, text: item.text, color: HL_COLOR, rects };
+    try {
+      const res = await fetch('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(h),
+      });
+      if (!res.ok) throw new Error((await res.text()).trim());
+      const data = await res.json();
+      hls.push({ ...h, id: data.id });
+      drawPage(item.pageDiv);
+      window.getSelection().removeAllRanges();
+      toast(`🖍️ 高亮了（本文件共 ${hls.length} 处）`);
+    } catch (e) {
+      toast('❌ 高亮存不上：' + e.message);
+      console.error('[高亮]', e);
+    }
+  }
+
+  // 每个 .page 里挂一层自己的覆盖层。pointer-events:none，所以不挡选中；
+  // .page 本身是 position:relative，百分比定位直接就对得上。
+  function layerOf(pageDiv) {
+    let l = pageDiv.querySelector(':scope > .pr-hl-layer');
+    if (!l) {
+      l = document.createElement('div');
+      l.className = 'pr-hl-layer';
+      l.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1';
+      pageDiv.appendChild(l);
+    }
+    return l;
+  }
+
+  function drawPage(pageDiv) {
+    if (!pageDiv) return;
+    const page = parseInt(pageDiv.getAttribute('data-page-number'), 10);
+    const l = layerOf(pageDiv);
+    l.textContent = '';
+    for (const h of hls) {
+      if (h.page !== page) continue;
+      for (const r of h.rects) {
+        const d = document.createElement('div');
+        d.style.cssText = [
+          'position:absolute',
+          `left:${r.x * 100}%`, `top:${r.y * 100}%`,
+          `width:${r.w * 100}%`, `height:${r.h * 100}%`,
+          `background:${h.color || HL_COLOR}`,
+          'mix-blend-mode:multiply', 'border-radius:2px',
+        ].join(';');
+        l.appendChild(d);
+      }
+    }
+  }
+
+  function drawAll() {
+    document.querySelectorAll('.page[data-page-number]').forEach(drawPage);
+  }
+
+  // ── f：翻译（备用）──────────────────────────────────────────────────
   async function actTranslate(item) {
-    panel(`🔄 翻译中…`, item.text);
+    panel('🔄 翻译中…', item.text);
     try {
       const res = await fetch('/api/translate?text=' + encodeURIComponent(item.text));
       if (!res.ok) throw new Error((await res.text()).trim());
@@ -97,15 +225,56 @@
     }
   }
 
-  function actSpeak(item) {
-    if (audio) audio.pause(); // 连按就换成新的，不要叠着放
+  // ── r：朗读 ─────────────────────────────────────────────────────────
+  // 优先点谷歌翻译插件气泡里的喇叭。气泡是选中之后才异步冒出来的，所以要轮询等，
+  // 不能用固定 setTimeout。找不到（插件没装/没弹）才退回自己的 GCP TTS。
+  function findGtxButton() {
+    const docs = [document];
+    for (const f of document.querySelectorAll('iframe')) {
+      try {
+        if (f.contentDocument) docs.push(f.contentDocument); // 跨源的会抛，跳过
+      } catch { /* 够不着就算了 */ }
+    }
+    for (const doc of docs) {
+      for (const sel of GTX_SELECTORS) {
+        const el = doc.querySelector(sel);
+        if (el && el.offsetParent !== null) return el;
+      }
+    }
+    return null;
+  }
+
+  function waitGtx(timeout) {
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      (function tick() {
+        const el = findGtxButton();
+        if (el) return resolve(el);
+        if (performance.now() - t0 > timeout) return resolve(null);
+        setTimeout(tick, 80);
+      })();
+    });
+  }
+
+  async function actSpeak(item) {
+    const btn = await waitGtx(GTX_WAIT_MS);
+    if (btn) {
+      // 播放/停止是同一个切换按钮，只能点一次——补发指针事件等于点两下，刚响就被停掉
+      btn.click();
+      lastSpeakVia = '谷歌翻译插件';
+      toast('🔊 ' + item.text.slice(0, 40));
+      return;
+    }
+    // 兜底：插件的喇叭没找到，用自己的 GCP TTS
+    if (audio) audio.pause();
     audio = new Audio('/api/tts?text=' + encodeURIComponent(item.text));
     audio.play().catch((e) => {
       toast('❌ 放不出来：' + e.message);
       console.error('[朗读]', e);
     });
     audio.addEventListener('error', () => toast('❌ 朗读失败 —— 按 d 看控制台'));
-    toast('🔊 ' + item.text.slice(0, 40));
+    lastSpeakVia = 'GCP TTS（没找到插件的喇叭）';
+    toast('🔊 ' + item.text.slice(0, 40) + '（走 GCP）');
   }
 
   // ── 按键 ────────────────────────────────────────────────────────────
@@ -127,10 +296,10 @@
     if (action === 'debug') {
       e.preventDefault();
       e.stopPropagation();
-      const item = grab();
-      console.log('[pdf_reader] 当前文件:', currentFile());
-      console.log('[pdf_reader] 这次抓到的:', item);
-      console.log('[pdf_reader] 本次已存错题:', saved);
+      console.log('[pdf_reader] 文件:', file);
+      console.log('[pdf_reader] 这次抓到的:', grab());
+      console.log('[pdf_reader] 本次已存错题:', saved, '· 本文件高亮:', hls.length);
+      console.log('[pdf_reader] 谷歌翻译喇叭:', findGtxButton(), '· 上次朗读走的:', lastSpeakVia);
       console.log('[pdf_reader] 文字层数量:', document.querySelectorAll('.textLayer').length);
       toast('🔍 已打印到控制台（F12）');
       return;
@@ -146,11 +315,31 @@
     e.stopPropagation();
 
     if (action === 'wrong') actWrong(item);
+    else if (action === 'highlight') actHighlight(item);
     else if (action === 'translate') actTranslate(item);
     else if (action === 'speak') actSpeak(item);
   }
 
   document.addEventListener('keydown', onKey, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && panelEl) panelEl.style.display = 'none';
+  }, true);
+
+  // ── 跟 pdf.js 挂钩：页面重绘时把高亮补回去 ──────────────────────────
+  // pdf.js 会把滚出视野的页面卸载掉，回来时重新渲染，高亮得跟着重画。
+  // viewer.mjs 把自己挂在 window.PDFViewerApplication 上，等它出现就行。
+  (function hook() {
+    const app = window.PDFViewerApplication;
+    if (!app || !app.eventBus) return setTimeout(hook, 100);
+    app.eventBus.on('pagerendered', (e) => drawPage(e.source && e.source.div));
+    app.eventBus.on('scalechanging', () => setTimeout(drawAll, 60));
+    app.eventBus.on('rotationchanging', () => setTimeout(drawAll, 60));
+  })();
+
+  fetch('/api/highlights?file=' + encodeURIComponent(file))
+    .then((r) => r.json())
+    .then((d) => { hls = d || []; drawAll(); })
+    .catch((e) => console.error('[高亮] 读不到:', e));
 
   // ── 翻译浮层 ────────────────────────────────────────────────────────
   let panelEl;
@@ -177,15 +366,11 @@
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:11px;opacity:.4;margin-top:8px';
-    hint.textContent = 'Esc 关 · r 朗读 · a 存错题本';
+    hint.textContent = 'Esc 关 · r 朗读 · a 存错题本 · s 高亮';
 
     panelEl.append(res, src, hint);
     panelEl.style.display = 'block';
   }
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && panelEl) panelEl.style.display = 'none';
-  }, true);
 
   // ── 角落提示条 ──────────────────────────────────────────────────────
   let tipEl, tipTimer;
@@ -208,5 +393,5 @@
     tipTimer = setTimeout(() => { tipEl.style.opacity = '0'; }, 2600);
   }
 
-  toast('📖 选中文字后：a 存错题 · f 翻译 · r 朗读 · d 诊断');
+  toast('📖 选中文字后：a 存错题 · s 高亮 · r 朗读 · f 翻译 · d 诊断');
 })();
