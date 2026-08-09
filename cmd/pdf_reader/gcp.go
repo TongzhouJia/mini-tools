@@ -108,35 +108,34 @@ type translateResp struct {
 	From string `json:"from"`
 }
 
-func handleTranslate(w http.ResponseWriter, r *http.Request) {
+// translateText 打一次 Cloud Translation，结果按 sha1 存盘。
+// 存单词本时也走这里，所以同一个词翻两遍不会重复烧配额。
+func translateText(text string) (translateResp, error) {
+	var out translateResp
 	if translateKey == "" {
-		http.Error(w, "没配 GOOGLE_TRANSLATE_API_KEY（放进仓库根目录的 .env）", http.StatusServiceUnavailable)
-		return
+		return out, fmt.Errorf("没配 GOOGLE_TRANSLATE_API_KEY（放进仓库根目录的 .env）")
 	}
-	text, err := clampText(r.URL.Query().Get("text"))
+	text, err := clampText(text)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return out, err
 	}
 
 	ck := cacheFile("translate", text+"|"+transTo, ".json")
 	if b := readCache(ck); b != nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write(b)
-		return
+		if json.Unmarshal(b, &out) == nil {
+			return out, nil
+		}
 	}
 
 	form := url.Values{"q": {text}, "target": {transTo}, "format": {"text"}}
 	resp, err := http.PostForm(translateAPI+"?key="+url.QueryEscape(translateKey), form)
 	if err != nil {
-		http.Error(w, "翻译请求失败（网络？）："+err.Error(), http.StatusBadGateway)
-		return
+		return out, fmt.Errorf("翻译请求失败（网络？）：%w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "翻译 API 返回 "+resp.Status+"："+squash(body), http.StatusBadGateway)
-		return
+		return out, fmt.Errorf("翻译 API 返回 %s：%s", resp.Status, squash(body))
 	}
 
 	var parsed struct {
@@ -148,17 +147,27 @@ func handleTranslate(w http.ResponseWriter, r *http.Request) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil || len(parsed.Data.Translations) == 0 {
-		http.Error(w, "翻译结果看不懂："+squash(body), http.StatusBadGateway)
-		return
+		return out, fmt.Errorf("翻译结果看不懂：%s", squash(body))
 	}
 
-	out, _ := json.Marshal(translateResp{
+	out = translateResp{
 		Text: parsed.Data.Translations[0].TranslatedText,
 		From: parsed.Data.Translations[0].DetectedSourceLanguage,
-	})
-	writeCache(ck, out)
+	}
+	if b, err := json.Marshal(out); err == nil {
+		writeCache(ck, b)
+	}
+	return out, nil
+}
+
+func handleTranslate(w http.ResponseWriter, r *http.Request) {
+	out, err := translateText(r.URL.Query().Get("text"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write(out)
+	json.NewEncoder(w).Encode(out)
 }
 
 // ── 朗读 ──────────────────────────────────────────────────────────────

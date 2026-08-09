@@ -9,7 +9,7 @@
 //
 // 在此之上内置了三个动作，选中文字后按单个字母触发：
 //
-//	a  存进错题本 CSV（带页码和上下文）
+//	a  存进单词本（自动翻译，一天一个 dayNN.csv，两列：英文,中文）
 //	s  高亮（再按一次取消）
 //	r  朗读——优先点谷歌翻译插件气泡里的喇叭，找不到才退回 GCP TTS
 //	f  翻译（GCP Cloud Translation）。备用，正常靠谷歌翻译插件选中自动弹
@@ -21,7 +21,6 @@ package main
 import (
 	"archive/zip"
 	_ "embed"
-	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -34,8 +33,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
-	"time"
 )
 
 //go:embed index.html
@@ -44,18 +41,15 @@ var indexHTML []byte
 //go:embed capture.js
 var captureJS []byte
 
-//go:embed wrongbook.html
-var wrongbookHTML []byte
+//go:embed words.html
+var wordsHTML []byte
 
 const (
 	defaultPort = "8084"
 	// pdf.js 官方 release，走 GitHub 上游，不用任何镜像
 	pdfjsRelease = "https://api.github.com/repos/mozilla/pdf.js/releases/latest"
-	csvName      = "错题本.csv"
 	walkMaxDepth = 5 // 扫 PDF 的最大层数，太深了慢
 )
-
-var csvHeader = []string{"时间", "文件", "页码", "原文", "上下文", "备注"}
 
 var (
 	rootDir   string
@@ -66,9 +60,6 @@ var (
 	transTo   string
 	voiceLang string
 )
-
-// 写 CSV 要串行，浏览器可能连点几下
-var csvMu sync.Mutex
 
 func home() string {
 	h, err := os.UserHomeDir()
@@ -81,7 +72,7 @@ func home() string {
 func main() {
 	flag.StringVar(&rootDir, "dir", home(), "扫哪个目录下的 PDF")
 	flag.StringVar(&pdfjsDir, "pdfjs", envOr("PDFJS_DIR", filepath.Join(home(), ".local", "share", "pdfjs")), "pdf.js dist 解压后的目录（没有会自动从官方 release 下载）")
-	flag.StringVar(&dataDir, "data", envOr("PDF_READER_DATA_DIR", filepath.Join("data", "pdf_reader")), "错题本 CSV 存哪儿")
+	flag.StringVar(&dataDir, "data", envOr("PDF_READER_DATA_DIR", filepath.Join("data", "pdf_reader")), "单词本 / 高亮 / 缓存存哪儿")
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
 	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY / GOOGLE_TTS_API_KEY")
 	flag.StringVar(&transTo, "to", "zh-CN", "翻译成哪种语言")
@@ -111,22 +102,22 @@ func main() {
 	http.HandleFunc("/api/files", handleFiles)
 	http.HandleFunc("/read", handleRead)
 	http.HandleFunc("/capture.js", handleCaptureJS)
-	http.HandleFunc("/wrongbook", handleWrongbookPage)
-	http.HandleFunc("/api/wrong", handleWrong)
+	http.HandleFunc("/words", handleWordsPage)
+	http.HandleFunc("/api/words", handleWords)
 	http.HandleFunc("/api/highlights", handleHighlights)
 	http.HandleFunc("/api/translate", handleTranslate)
 	http.HandleFunc("/api/tts", handleTTS)
 	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(rootDir))))
 	http.HandleFunc("/pdfjs/", handlePDFJS)
 
-	// Key 缺了不致命：错题本照样能用，只是翻译/朗读会返回一句人话错误
+	// Key 缺了不致命：单词照样存得进去，中文列留空、翻译/朗读返回一句人话错误
 	initGCP(envPath)
 
 	addr := "127.0.0.1:" + port
 	fmt.Printf("📖 PDF 阅读器起来了：http://localhost:%s\n", port)
 	fmt.Printf("   扫描目录：%s\n", rootDir)
-	fmt.Printf("   错题本：  %s\n", filepath.Join(dataDir, csvName))
-	fmt.Printf("   选中文字后：a 存错题 · s 高亮 · r 朗读 · f 翻译 · d 诊断\n")
+	fmt.Printf("   单词本：  %s\n", wordsDir())
+	fmt.Printf("   选中文字后：a 存单词 · s 高亮 · r 朗读 · f 翻译 · d 诊断\n")
 	fmt.Printf("   翻译 %s：%s   朗读 %s：%s\n",
 		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang)
 	if err := http.ListenAndServe(addr, nil); err != nil {
@@ -299,9 +290,9 @@ func handleCaptureJS(w http.ResponseWriter, r *http.Request) {
 	w.Write(captureJS)
 }
 
-func handleWrongbookPage(w http.ResponseWriter, r *http.Request) {
+func handleWordsPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(wrongbookHTML)
+	w.Write(wordsHTML)
 }
 
 // handlePDFJS 伺服 pdf.js dist；viewer.html 要特殊处理——把 capture.js 塞进去。
@@ -403,131 +394,4 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(out)
-}
-
-// ── 错题本 ────────────────────────────────────────────────────────────
-
-type wrongItem struct {
-	Time    string `json:"time"`
-	File    string `json:"file"`
-	Page    string `json:"page"`
-	Text    string `json:"text"`
-	Context string `json:"context"`
-	Note    string `json:"note"`
-}
-
-func handleWrong(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		items, err := readWrong()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(items)
-
-	case http.MethodPost:
-		var it wrongItem
-		if err := json.NewDecoder(r.Body).Decode(&it); err != nil {
-			http.Error(w, "请求体不对："+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if strings.TrimSpace(it.Text) == "" {
-			http.Error(w, "没选中任何文字", http.StatusBadRequest)
-			return
-		}
-		it.Time = time.Now().Format("2006-01-02 15:04:05")
-		n, err := appendWrong(it)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "total": n})
-
-	default:
-		http.Error(w, "只收 GET / POST", http.StatusMethodNotAllowed)
-	}
-}
-
-func csvPath() string { return filepath.Join(dataDir, csvName) }
-
-func appendWrong(it wrongItem) (int, error) {
-	csvMu.Lock()
-	defer csvMu.Unlock()
-
-	path := csvPath()
-	_, statErr := os.Stat(path)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	wcsv := csv.NewWriter(f)
-	if os.IsNotExist(statErr) {
-		// 头一次写：先来个 BOM，不然 Excel 打开中文是乱码
-		if _, err := f.WriteString("\uFEFF"); err != nil {
-			return 0, err
-		}
-		if err := wcsv.Write(csvHeader); err != nil {
-			return 0, err
-		}
-	}
-	if err := wcsv.Write([]string{it.Time, it.File, it.Page, it.Text, it.Context, it.Note}); err != nil {
-		return 0, err
-	}
-	wcsv.Flush()
-	if err := wcsv.Error(); err != nil {
-		return 0, err
-	}
-
-	items, err := readWrongLocked()
-	if err != nil {
-		return 0, nil // 写成功了就算成功，数不出来无所谓
-	}
-	return len(items), nil
-}
-
-func readWrong() ([]wrongItem, error) {
-	csvMu.Lock()
-	defer csvMu.Unlock()
-	return readWrongLocked()
-}
-
-func readWrongLocked() ([]wrongItem, error) {
-	f, err := os.Open(csvPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []wrongItem{}, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-
-	rd := csv.NewReader(f)
-	rd.FieldsPerRecord = -1
-	rows, err := rd.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("错题本 CSV 读不动（是不是手改坏了？）：%w", err)
-	}
-
-	items := []wrongItem{}
-	for i, row := range rows {
-		if i == 0 {
-			continue // 表头
-		}
-		get := func(n int) string {
-			if n < len(row) {
-				return row[n]
-			}
-			return ""
-		}
-		items = append(items, wrongItem{
-			Time: get(0), File: get(1), Page: get(2),
-			Text: get(3), Context: get(4), Note: get(5),
-		})
-	}
-	return items, nil
 }

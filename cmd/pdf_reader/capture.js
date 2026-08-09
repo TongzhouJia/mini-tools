@@ -1,4 +1,4 @@
-// capture.js —— 注入到 pdf.js viewer 里：划词存错题 / 高亮 / 翻译 / 朗读。
+// capture.js —— 注入到 pdf.js viewer 里：划词存单词 / 高亮 / 翻译 / 朗读。
 // 由 pdf_reader 在伺服 viewer.html 时塞进去，不是油猴脚本，改完重启工具就生效。
 //
 // 快捷键是单独字母（a / s / f / r / d），不带修饰键——阅读时不打字，按着顺手。
@@ -21,7 +21,7 @@
   ];
 
   const KEYS = {
-    a: 'wrong',     // 存错题本
+    a: 'word',      // 存单词本
     s: 'highlight', // 高亮
     f: 'translate', // 翻译（备用，正常靠谷歌翻译插件自动弹）
     r: 'speak',     // 朗读
@@ -86,23 +86,28 @@
     };
   }
 
-  // ── a：存错题本 ─────────────────────────────────────────────────────
-  async function actWrong(item) {
+  // ── a：存单词本 ────────────────────────────────────────────────────
+  // 只送选中的文字，翻译和分天归档都在服务端做
+  async function actWord(item) {
     try {
-      const res = await fetch('/api/wrong', {
+      const res = await fetch('/api/words', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: item.file, page: item.page, text: item.text, context: item.context,
-        }),
+        body: JSON.stringify({ text: item.text }),
       });
       if (!res.ok) throw new Error((await res.text()).trim());
       const data = await res.json();
+      if (data.dup) {
+        toast(`🔁 day${String(data.day).padStart(2, '0')} 里已经有了：${data.en} — ${data.zh}`);
+        return;
+      }
       saved++;
-      toast(`✅ 已存第 ${item.page} 页（本次 ${saved} 条 · 共 ${data.total} 条）`);
+      const zh = data.zh || '（没翻出来，手工补）';
+      toast(`✅ ${data.en} — ${zh}（${data.file} · 共 ${data.total} 个）`);
+      if (data.warn) console.warn('[单词本]', data.warn);
     } catch (e) {
       toast('❌ 存失败：' + e.message);
-      console.error('[错题本]', e);
+      console.error('[单词本]', e);
     }
   }
 
@@ -298,7 +303,7 @@
       e.stopPropagation();
       console.log('[pdf_reader] 文件:', file);
       console.log('[pdf_reader] 这次抓到的:', grab());
-      console.log('[pdf_reader] 本次已存错题:', saved, '· 本文件高亮:', hls.length);
+      console.log('[pdf_reader] 本次已存单词:', saved, '· 本文件高亮:', hls.length);
       console.log('[pdf_reader] 谷歌翻译喇叭:', findGtxButton(), '· 上次朗读走的:', lastSpeakVia);
       console.log('[pdf_reader] 文字层数量:', document.querySelectorAll('.textLayer').length);
       toast('🔍 已打印到控制台（F12）');
@@ -314,7 +319,7 @@
     e.preventDefault();
     e.stopPropagation();
 
-    if (action === 'wrong') actWrong(item);
+    if (action === 'word') actWord(item);
     else if (action === 'highlight') actHighlight(item);
     else if (action === 'translate') actTranslate(item);
     else if (action === 'speak') actSpeak(item);
@@ -366,7 +371,7 @@
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:11px;opacity:.4;margin-top:8px';
-    hint.textContent = 'Esc 关 · r 朗读 · a 存错题本 · s 高亮';
+    hint.textContent = 'Esc 关 · r 朗读 · a 存单词本 · s 高亮';
 
     panelEl.append(res, src, hint);
     panelEl.style.display = 'block';
@@ -393,5 +398,5 @@
     tipTimer = setTimeout(() => { tipEl.style.opacity = '0'; }, 2600);
   }
 
-  toast('📖 选中文字后：a 存错题 · s 高亮 · r 朗读 · f 翻译 · d 诊断');
+  toast('📖 选中文字后：a 存单词 · s 高亮 · r 朗读 · f 翻译 · d 诊断');
 })();

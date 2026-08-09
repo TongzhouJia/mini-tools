@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📕 单词本</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 24px;
+    font: 15px/1.6 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif;
+    background: #f6f6f7; color: #1c1c1e;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1c1c1e; color: #f2f2f7; }
+    .card { background: #2c2c2e !important; }
+    a { color: #7ab7ff !important; }
+    input { background: #1c1c1e; color: #f2f2f7; border-color: #48484a !important; }
+    .row { border-color: rgba(255,255,255,.08) !important; }
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .65; font-size: 13px; margin-bottom: 20px; }
+  input {
+    width: 100%; max-width: 420px; padding: 8px 12px; font-size: 14px; margin-bottom: 16px;
+    border: 1px solid #d1d1d6; border-radius: 8px; background: #fff; color: inherit;
+  }
+  h2 { font-size: 14px; opacity: .55; margin: 22px 0 8px; font-weight: 600; }
+  .card { background: #fff; border-radius: 10px; overflow: hidden; }
+  .row { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid rgba(0,0,0,.07); }
+  .row:first-child { border-top: none; }
+  .en { flex: 0 0 42%; font-weight: 600; word-break: break-word; }
+  .zh { flex: 1; opacity: .8; word-break: break-word; }
+  .zh.missing { opacity: .35; font-style: italic; }
+  .empty { padding: 40px; text-align: center; opacity: .6; }
+</style>
+</head>
+<body>
+  <h1>📕 单词本</h1>
+  <div class="sub">
+    一天一个 <code>dayNN.csv</code>，两列：英文,中文 —— 可以直接喂给 <code>vocabulary_comparison</code> ·
+    <a href="/">← 回文件列表</a>
+  </div>
+
+  <input id="q" type="search" placeholder="🔍 搜英文或中文…">
+  <div id="list"><div class="empty">⏳ 读取中…</div></div>
+
+<script>
+  let all = [];
+  const esc = (s) => (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function render(items) {
+    const box = document.getElementById('list');
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">🈳 还没攒过单词 —— 在 PDF 里选中一个词按 a</div>';
+      return;
+    }
+    // 按天分组，最近的一天放最上面
+    const byDay = new Map();
+    for (const it of items) {
+      if (!byDay.has(it.day)) byDay.set(it.day, []);
+      byDay.get(it.day).push(it);
+    }
+    const days = [...byDay.keys()].sort((a, b) => b - a);
+
+    box.innerHTML = days.map((d) => {
+      const rows = byDay.get(d).map((it) => `
+        <div class="row">
+          <div class="en">${esc(it.en)}</div>
+          <div class="zh${it.zh ? '' : ' missing'}">${esc(it.zh) || '（没翻出来，手工补）'}</div>
+        </div>`).join('');
+      return `<h2>day${String(d).padStart(2, '0')} · ${byDay.get(d).length} 个</h2>
+              <div class="card">${rows}</div>`;
+    }).join('');
+  }
+
+  document.getElementById('q').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    render(!q ? all : all.filter((it) => (it.en + ' ' + it.zh).toLowerCase().includes(q)));
+  });
+
+  fetch('/api/words')
+    .then((r) => r.json())
+    .then((d) => { all = d || []; render(all); })
+    .catch((e) => {
+      document.getElementById('list').innerHTML = '<div class="empty">❌ 读不到：' + e.message + '</div>';
+    });
+</script>
+</body>
+</html>
