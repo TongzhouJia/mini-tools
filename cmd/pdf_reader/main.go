@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 //go:embed index.html
@@ -105,10 +106,10 @@ func main() {
 	http.HandleFunc("/read", handleRead)
 	http.HandleFunc("/capture.js", handleCaptureJS)
 	http.HandleFunc("/words", handleWordsPage)
-	http.HandleFunc("/api/words", handleWords)
-	http.HandleFunc("/api/highlights", handleHighlights)
-	http.HandleFunc("/api/translate", handleTranslate)
-	http.HandleFunc("/api/tts", handleTTS)
+	http.HandleFunc("/api/words", logged("/api/words", handleWords))
+	http.HandleFunc("/api/highlights", logged("/api/highlights", handleHighlights))
+	http.HandleFunc("/api/translate", logged("/api/translate", handleTranslate))
+	http.HandleFunc("/api/tts", logged("/api/tts", handleTTS))
 	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(rootDir))))
 	http.HandleFunc("/pdfjs/", handlePDFJS)
 
@@ -124,6 +125,36 @@ func main() {
 		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang, voiceName)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("❌ 起不来（端口被占了？换 -port）：%v", err)
+	}
+}
+
+// logged 包一层，把 /api/* 的请求和返回码打到终端。
+// 浏览器那边报错经常只剩一句「no supported source found」，看这儿才知道真相。
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(c int) {
+	w.code = c
+	w.ResponseWriter.WriteHeader(c)
+}
+
+func logged(name string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, code: 200}
+		t0 := time.Now()
+		h(sw, r)
+		mark := "✅"
+		if sw.code >= 400 {
+			mark = "❌"
+		}
+		q := r.URL.RawQuery
+		if len(q) > 80 {
+			q = q[:80] + "…"
+		}
+		log.Printf("%s %s %s %d %s?%s", mark, r.Method, name, sw.code,
+			time.Since(t0).Round(time.Millisecond), q)
 	}
 }
 

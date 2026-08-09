@@ -193,9 +193,8 @@ func handleTTS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ck := cacheFile("tts", text+"|"+lang+"|"+name, ".mp3")
-	if b := readCache(ck); b != nil {
-		w.Header().Set("Content-Type", "audio/mpeg")
-		w.Write(b)
+	if _, err := os.Stat(ck); err == nil {
+		serveMP3(w, r, ck)
 		return
 	}
 
@@ -235,8 +234,29 @@ func handleTTS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCache(ck, mp3)
+	serveMP3(w, r, ck)
+}
+
+// serveMP3 一律用 http.ServeContent 吐音频，别自己 w.Write。
+//
+// 自己写的话 Go 会用 Transfer-Encoding: chunked、不带 Content-Length，而且
+// 浏览器给媒体发的 Range 请求也只会得到 200 而不是 206 —— <audio> 碰上这种响应
+// 就直接判定「no supported source found」，报错里完全看不出是这个原因。
+// ServeContent 会把 Content-Length、Range/206、Last-Modified 都处理好。
+func serveMP3(w http.ResponseWriter, r *http.Request, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, "音频缓存读不到："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		http.Error(w, "音频缓存看不了："+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "audio/mpeg")
-	w.Write(mp3)
+	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }
 
 // squash 把 API 的报错压成一行塞进 HTTP 错误里，太长的截断

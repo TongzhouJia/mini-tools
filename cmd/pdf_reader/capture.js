@@ -222,17 +222,27 @@
   }
 
   // ── r：朗读 ─────────────────────────────────────────────────────────
-  // 直接走自己的 GCP TTS。原来试过点谷歌翻译气泡里那个喇叭，实测放不出来，
-  // 不折腾了 —— 服务端有磁盘缓存，同一个词念第二遍不花钱。
-  function actSpeak(item) {
-    if (audio) audio.pause(); // 连按就换成新的，不要叠着放
-    audio = new Audio('/api/tts?text=' + encodeURIComponent(item.text));
-    audio.play().catch((e) => {
-      toast('❌ 放不出来：' + e.message);
+  // 直接走自己的 GCP TTS。服务端有磁盘缓存，同一个词念第二遍不花钱。
+  //
+  // 特意用 fetch + blob 而不是 new Audio(url)：<audio> 拿到非音频响应时
+  // 只会甩一句「no supported source found」，服务端真正的报错全被吞掉。
+  // 先 fetch 就能把那句人话读出来。
+  async function actSpeak(item) {
+    if (audio) { audio.pause(); URL.revokeObjectURL(audio.src); audio = null; }
+    try {
+      const res = await fetch('/api/tts?text=' + encodeURIComponent(item.text));
+      if (!res.ok) throw new Error(`${res.status} ${(await res.text()).trim()}`);
+      const blob = await res.blob();
+      if (!blob.size) throw new Error('服务端回了个空音频');
+      audio = new Audio(URL.createObjectURL(blob));
+      audio.addEventListener('error', () =>
+        toast(`❌ 解不了码（${blob.type} ${blob.size}B）—— 按 d 看控制台`));
+      await audio.play();
+      toast('🔊 ' + item.text.slice(0, 40));
+    } catch (e) {
+      toast('❌ 朗读失败：' + e.message);
       console.error('[朗读]', e);
-    });
-    audio.addEventListener('error', () => toast('❌ 朗读失败 —— 按 d 看控制台'));
-    toast('🔊 ' + item.text.slice(0, 40));
+    }
   }
 
   // ── 按键 ────────────────────────────────────────────────────────────
