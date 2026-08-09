@@ -6,7 +6,15 @@
 //
 // 这个工具用 Mozilla 官方的 pdf.js 在 http://localhost 上重新渲染 PDF。pdf.js 会铺一层
 // 真实的 DOM 文字层（text layer），于是它就是一个普通网页：能选中、能划词、插件能注入。
-// 顺手内置了一个「错题本」：选中文字按 Ctrl+Shift+S 就存进 CSV。
+//
+// 在此之上内置了三个动作，选中文字后按单个字母触发：
+//
+//	a  存进错题本 CSV（带页码和上下文）
+//	f  翻译（GCP Cloud Translation）
+//	r  朗读（GCP Text-to-Speech）
+//	d  诊断信息打到控制台
+//
+// 翻译和朗读的结果都按 sha1 存盘缓存，同一个词不会重复烧配额。
 package main
 
 import (
@@ -49,10 +57,13 @@ const (
 var csvHeader = []string{"时间", "文件", "页码", "原文", "上下文", "备注"}
 
 var (
-	rootDir  string
-	pdfjsDir string
-	dataDir  string
-	port     string
+	rootDir   string
+	pdfjsDir  string
+	dataDir   string
+	port      string
+	envPath   string
+	transTo   string
+	voiceLang string
 )
 
 // 写 CSV 要串行，浏览器可能连点几下
@@ -71,6 +82,9 @@ func main() {
 	flag.StringVar(&pdfjsDir, "pdfjs", envOr("PDFJS_DIR", filepath.Join(home(), ".local", "share", "pdfjs")), "pdf.js dist 解压后的目录（没有会自动从官方 release 下载）")
 	flag.StringVar(&dataDir, "data", envOr("PDF_READER_DATA_DIR", filepath.Join("data", "pdf_reader")), "错题本 CSV 存哪儿")
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
+	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY / GOOGLE_TTS_API_KEY")
+	flag.StringVar(&transTo, "to", "zh-CN", "翻译成哪种语言")
+	flag.StringVar(&voiceLang, "voice", "en-US", "朗读用哪种嗓子（选中的是中日韩会自动切 cmn-CN）")
 	flag.Parse()
 
 	abs, err := filepath.Abs(rootDir)
@@ -98,17 +112,31 @@ func main() {
 	http.HandleFunc("/capture.js", handleCaptureJS)
 	http.HandleFunc("/wrongbook", handleWrongbookPage)
 	http.HandleFunc("/api/wrong", handleWrong)
+	http.HandleFunc("/api/translate", handleTranslate)
+	http.HandleFunc("/api/tts", handleTTS)
 	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(rootDir))))
 	http.HandleFunc("/pdfjs/", handlePDFJS)
+
+	// Key 缺了不致命：错题本照样能用，只是翻译/朗读会返回一句人话错误
+	initGCP(envPath)
 
 	addr := "127.0.0.1:" + port
 	fmt.Printf("📖 PDF 阅读器起来了：http://localhost:%s\n", port)
 	fmt.Printf("   扫描目录：%s\n", rootDir)
 	fmt.Printf("   错题本：  %s\n", filepath.Join(dataDir, csvName))
-	fmt.Printf("   选中文字按 Ctrl+Shift+S 存错题，Ctrl+Shift+D 看诊断\n")
+	fmt.Printf("   选中文字后：a 存错题 · f 翻译 · r 朗读 · d 诊断\n")
+	fmt.Printf("   翻译 %s：%s   朗读 %s：%s\n",
+		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("❌ 起不来（端口被占了？换 -port）：%v", err)
 	}
+}
+
+func tick(ok bool) string {
+	if ok {
+		return "✅"
+	}
+	return "❌ 没配 Key"
 }
 
 func must(err error) {
