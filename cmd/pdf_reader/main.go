@@ -10,8 +10,9 @@
 // 在此之上内置了三个动作，选中文字后按单个字母触发：
 //
 //	a  存进错题本 CSV（带页码和上下文）
-//	f  翻译（GCP Cloud Translation）
-//	r  朗读（GCP Text-to-Speech）
+//	s  高亮（再按一次取消）
+//	r  朗读——优先点谷歌翻译插件气泡里的喇叭，找不到才退回 GCP TTS
+//	f  翻译（GCP Cloud Translation）。备用，正常靠谷歌翻译插件选中自动弹
 //	d  诊断信息打到控制台
 //
 // 翻译和朗读的结果都按 sha1 存盘缓存，同一个词不会重复烧配额。
@@ -125,7 +126,7 @@ func main() {
 	fmt.Printf("📖 PDF 阅读器起来了：http://localhost:%s\n", port)
 	fmt.Printf("   扫描目录：%s\n", rootDir)
 	fmt.Printf("   错题本：  %s\n", filepath.Join(dataDir, csvName))
-	fmt.Printf("   选中文字后：a 存错题 · f 翻译 · r 朗读 · d 诊断\n")
+	fmt.Printf("   选中文字后：a 存错题 · s 高亮 · r 朗读 · f 翻译 · d 诊断\n")
 	fmt.Printf("   翻译 %s：%s   朗读 %s：%s\n",
 		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang)
 	if err := http.ListenAndServe(addr, nil); err != nil {
