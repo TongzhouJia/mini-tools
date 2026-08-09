@@ -10,15 +10,7 @@
   // ── 配置 ────────────────────────────────────────────────────────────
   const CONTEXT_CHARS = 80;                       // 上下文往前后各抓多少字
   const HL_COLOR = 'rgba(255, 214, 0, .45)';      // 高亮颜色，想标红就换成 rgba(255,0,0,.3)
-  const GTX_WAIT_MS = 1500;                       // 等谷歌翻译气泡冒出来的上限
   const HL_OVERLAP = 0.3;                         // 重叠超过这个比例就当成「再按一次 = 取消高亮」
-
-  // 谷歌翻译插件那个喇叭按钮，多层兜底 —— 插件改版时至少还有下一层顶着
-  const GTX_SELECTORS = [
-    '.gtx-source-audio',
-    '.gtx-audio-button',
-    '[class*="gtx"][class*="audio"][role="button"]',
-  ];
 
   const KEYS = {
     a: 'word',      // 存单词本
@@ -31,7 +23,6 @@
   let saved = 0;
   let hls = [];      // 当前文件的全部高亮
   let audio = null;
-  let lastSpeakVia = '—';
 
   const file = currentFile();
 
@@ -231,55 +222,17 @@
   }
 
   // ── r：朗读 ─────────────────────────────────────────────────────────
-  // 优先点谷歌翻译插件气泡里的喇叭。气泡是选中之后才异步冒出来的，所以要轮询等，
-  // 不能用固定 setTimeout。找不到（插件没装/没弹）才退回自己的 GCP TTS。
-  function findGtxButton() {
-    const docs = [document];
-    for (const f of document.querySelectorAll('iframe')) {
-      try {
-        if (f.contentDocument) docs.push(f.contentDocument); // 跨源的会抛，跳过
-      } catch { /* 够不着就算了 */ }
-    }
-    for (const doc of docs) {
-      for (const sel of GTX_SELECTORS) {
-        const el = doc.querySelector(sel);
-        if (el && el.offsetParent !== null) return el;
-      }
-    }
-    return null;
-  }
-
-  function waitGtx(timeout) {
-    return new Promise((resolve) => {
-      const t0 = performance.now();
-      (function tick() {
-        const el = findGtxButton();
-        if (el) return resolve(el);
-        if (performance.now() - t0 > timeout) return resolve(null);
-        setTimeout(tick, 80);
-      })();
-    });
-  }
-
-  async function actSpeak(item) {
-    const btn = await waitGtx(GTX_WAIT_MS);
-    if (btn) {
-      // 播放/停止是同一个切换按钮，只能点一次——补发指针事件等于点两下，刚响就被停掉
-      btn.click();
-      lastSpeakVia = '谷歌翻译插件';
-      toast('🔊 ' + item.text.slice(0, 40));
-      return;
-    }
-    // 兜底：插件的喇叭没找到，用自己的 GCP TTS
-    if (audio) audio.pause();
+  // 直接走自己的 GCP TTS。原来试过点谷歌翻译气泡里那个喇叭，实测放不出来，
+  // 不折腾了 —— 服务端有磁盘缓存，同一个词念第二遍不花钱。
+  function actSpeak(item) {
+    if (audio) audio.pause(); // 连按就换成新的，不要叠着放
     audio = new Audio('/api/tts?text=' + encodeURIComponent(item.text));
     audio.play().catch((e) => {
       toast('❌ 放不出来：' + e.message);
       console.error('[朗读]', e);
     });
     audio.addEventListener('error', () => toast('❌ 朗读失败 —— 按 d 看控制台'));
-    lastSpeakVia = 'GCP TTS（没找到插件的喇叭）';
-    toast('🔊 ' + item.text.slice(0, 40) + '（走 GCP）');
+    toast('🔊 ' + item.text.slice(0, 40));
   }
 
   // ── 按键 ────────────────────────────────────────────────────────────
@@ -304,8 +257,7 @@
       console.log('[pdf_reader] 文件:', file);
       console.log('[pdf_reader] 这次抓到的:', grab());
       console.log('[pdf_reader] 本次已存单词:', saved, '· 本文件高亮:', hls.length);
-      console.log('[pdf_reader] 谷歌翻译喇叭:', findGtxButton(), '· 上次朗读走的:', lastSpeakVia);
-      console.log('[pdf_reader] 文字层数量:', document.querySelectorAll('.textLayer').length);
+        console.log('[pdf_reader] 文字层数量:', document.querySelectorAll('.textLayer').length);
       toast('🔍 已打印到控制台（F12）');
       return;
     }

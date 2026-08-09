@@ -11,7 +11,7 @@
 //
 //	a  存进单词本（自动翻译，一天一个 dayNN.csv，两列：英文,中文）
 //	s  高亮（再按一次取消）
-//	r  朗读——优先点谷歌翻译插件气泡里的喇叭，找不到才退回 GCP TTS
+//	r  朗读（GCP Text-to-Speech，默认澳洲口音）
 //	f  翻译（GCP Cloud Translation）。备用，正常靠谷歌翻译插件选中自动弹
 //	d  诊断信息打到控制台
 //
@@ -59,6 +59,7 @@ var (
 	envPath   string
 	transTo   string
 	voiceLang string
+	voiceName string
 )
 
 func home() string {
@@ -76,7 +77,8 @@ func main() {
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
 	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY / GOOGLE_TTS_API_KEY")
 	flag.StringVar(&transTo, "to", "zh-CN", "翻译成哪种语言")
-	flag.StringVar(&voiceLang, "voice", "en-US", "朗读用哪种嗓子（选中的是中日韩会自动切 cmn-CN）")
+	flag.StringVar(&voiceLang, "voice", "en-AU", "朗读语种（选中的是中日韩会自动切 cmn-CN）")
+	flag.StringVar(&voiceName, "voice-name", "en-AU-Chirp3-HD-Achernar", "具体哪把嗓子，留空让 Google 自己挑；`gcloud`/voices 接口能列全")
 	flag.Parse()
 
 	abs, err := filepath.Abs(rootDir)
@@ -118,8 +120,8 @@ func main() {
 	fmt.Printf("   扫描目录：%s\n", rootDir)
 	fmt.Printf("   单词本：  %s\n", wordsDir())
 	fmt.Printf("   选中文字后：a 存单词 · s 高亮 · r 朗读 · f 翻译 · d 诊断\n")
-	fmt.Printf("   翻译 %s：%s   朗读 %s：%s\n",
-		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang)
+	fmt.Printf("   翻译 %s：%s   朗读 %s：%s %s\n",
+		tick(translateKey != ""), transTo, tick(ttsKey != ""), voiceLang, voiceName)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("❌ 起不来（端口被占了？换 -port）：%v", err)
 	}

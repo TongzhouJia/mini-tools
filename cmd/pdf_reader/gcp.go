@@ -185,21 +185,27 @@ func handleTTS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lang := voiceLang
+	// 嗓子名字是跟语言绑死的，选中中日韩时不能把 en-AU 的名字带过去，
+	// 只给 languageCode 让 Google 自己挑
+	lang, name := voiceLang, voiceName
 	if hasCJK(text) {
-		lang = "cmn-CN"
+		lang, name = "cmn-CN", ""
 	}
 
-	ck := cacheFile("tts", text+"|"+lang, ".mp3")
+	ck := cacheFile("tts", text+"|"+lang+"|"+name, ".mp3")
 	if b := readCache(ck); b != nil {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		w.Write(b)
 		return
 	}
 
+	voice := map[string]string{"languageCode": lang}
+	if name != "" {
+		voice["name"] = name
+	}
 	reqBody, _ := json.Marshal(map[string]any{
 		"input":       map[string]string{"text": text},
-		"voice":       map[string]string{"languageCode": lang},
+		"voice":       voice,
 		"audioConfig": map[string]string{"audioEncoding": "MP3"},
 	})
 	resp, err := http.Post(ttsAPI+"?key="+url.QueryEscape(ttsKey),
