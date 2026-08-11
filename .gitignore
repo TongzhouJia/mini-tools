@@ -35,3 +35,4 @@ word_reader
 .DS_Store
 **/.DS_Store
 **/._*
+/context_vocab

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📝 上下文单词本</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #fff; --fg: #1c1b19; --muted: #6b6864;
+    --line: #e2ded7; --accent: #b4530a; --mark: #ffe08a; --mark-line: #e0a300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151a; --card: #201f26; --fg: #ece9e3; --muted: #979390;
+      --line: #34323b; --accent: #ffa458; --mark: #6a4a00; --mark-line: #d19b28;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .sp { flex: 1; }
+  a { color: var(--accent); }
+  .wrap {
+    display: grid; grid-template-columns: minmax(0,1.05fr) minmax(0,1fr);
+    gap: 18px; padding: 18px 20px 60px; max-width: 1500px; margin: 0 auto;
+  }
+  @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px;
+  }
+  .card + .card { margin-top: 14px; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+  textarea, input {
+    width: 100%; background: transparent; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+    font: inherit; outline: none;
+  }
+  textarea { min-height: 88px; resize: vertical; }
+  textarea:focus, input:focus { border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 8px 15px; font: inherit; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 12.5px; }
+
+  /* 可点的句子 */
+  #canvas {
+    margin: 12px 0 4px; font-size: 19px; line-height: 2.05;
+    min-height: 42px; letter-spacing: .01em;
+  }
+  #canvas .ph { color: var(--muted); font-size: 15px; }
+  .tok { cursor: pointer; border-radius: 5px; padding: 2px 1px; }
+  .tok:hover { background: var(--line); }
+  .tok.on, .hl {
+    background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-line);
+    border-radius: 5px; padding: 2px 3px;
+  }
+
+  /* 圈中的词 */
+  .marks { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .mark {
+    display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr) auto;
+    gap: 8px; align-items: center;
+  }
+  .mark input { padding: 6px 9px; }
+  .mark .del {
+    background: transparent; color: var(--muted); border: 0;
+    padding: 4px 6px; font-size: 16px; line-height: 1;
+  }
+  .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+
+  /* 列表 */
+  .entry { border-top: 1px solid var(--line); padding: 13px 0; }
+  .entry:first-child { border-top: 0; padding-top: 2px; }
+  .entry .sent { font-size: 16px; line-height: 1.85; }
+  .entry .zh { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  .entry .defs { margin-top: 6px; font-size: 13.5px; }
+  .entry .defs b { font-weight: 600; }
+  .entry .meta {
+    margin-top: 6px; font-size: 12px; color: var(--muted);
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .entry .meta button { background: transparent; color: var(--muted); border: 0; padding: 0; font-size: 12px; }
+  .entry .meta button:hover { color: var(--accent); text-decoration: underline; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg); padding: 9px 16px; border-radius: 20px;
+    font-size: 13.5px; opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #toast.show { opacity: .94; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📝 上下文单词本</h1>
+  <span class="hint" id="stat"></span>
+  <span class="sp"></span>
+  <input id="q" placeholder="搜句子 / 词 / 释义" style="width: 220px;">
+  <a href="/api/export.csv" download>导出 CSV</a>
+  <a href="/api/export.csv?full=1" download>带例句</a>
+</header>
+
+<div class="wrap">
+  <div>
+    <div class="card">
+      <h2>① 粘句子</h2>
+      <textarea id="sentence" placeholder="把整句粘进来，比如：She looked forward to the trip with a mixture of excitement and dread."></textarea>
+
+      <h2 style="margin-top:14px">② 点词圈中<span class="hint" style="font-weight:400">（shift+点相邻的词 = 并成词组）</span></h2>
+      <div id="canvas"><span class="ph">上面粘句子，这里就能点了</span></div>
+
+      <div class="marks" id="marks"><div class="empty">还没圈词</div></div>
+
+      <div style="margin-top:14px" class="row">
+        <input id="trans" placeholder="整句意思（可留空）" style="flex:1 1 260px">
+        <button class="ghost" id="btnTransAll">翻译整句</button>
+      </div>
+      <div style="margin-top:8px" class="row">
+        <input id="source" placeholder="出处：书名 / 网址 / 播客" style="flex:1 1 160px">
+        <input id="note" placeholder="备注：为什么记它" style="flex:2 1 200px">
+      </div>
+
+      <div style="margin-top:14px" class="row">
+        <button id="btnSave">保存　<span class="hint" style="color:#fff;opacity:.75">Ctrl+Enter</span></button>
+        <button class="ghost" id="btnClear">清空</button>
+        <span class="hint" id="editing"></span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>已存的句子</h2>
+      <div id="list"><div class="empty">还没有。左边存第一条吧。</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let marks = [];        // {start, end, text, lemma, zh}
+let editingId = "";
+let noKeyWarned = false;
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove("show"), 1900);
+}
+
+/* ── 切词 + 画出可点的句子 ───────────────────────────────── */
+// 用 Unicode 属性匹配，法语/西语的重音字母不会被切开；词内的 ' 和 - 也留着（don't、well-known）
+const WORD_RE = /[\p{L}\p{M}][\p{L}\p{M}'’\-]*/gu;
+
+function tokenize(text) {
+  const out = [];
+  let last = 0, m;
+  WORD_RE.lastIndex = 0;
+  while ((m = WORD_RE.exec(text)) !== null) {
+    if (m.index > last) out.push({ word: false, s: last, e: m.index });
+    out.push({ word: true, s: m.index, e: m.index + m[0].length });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ word: false, s: last, e: text.length });
+  return out;
+}
+
+function markAt(pos) {
+  return marks.find(k => pos >= k.start && pos < k.end);
+}
+
+function renderCanvas() {
+  const text = $("#sentence").value;
+  const box = $("#canvas");
+  if (!text.trim()) {
+    box.innerHTML = '<span class="ph">上面粘句子，这里就能点了</span>';
+    return;
+  }
+  let html = "";
+  for (const t of tokenize(text)) {
+    const chunk = esc(text.slice(t.s, t.e));
+    if (!t.word) { html += chunk.replace(/\n/g, "<br>"); continue; }
+    const on = markAt(t.s) ? " on" : "";
+    html += `<span class="tok${on}" data-s="${t.s}" data-e="${t.e}">${chunk}</span>`;
+  }
+  box.innerHTML = html;
+}
+
+/* 点词：已圈中的再点一次取消；shift+点 = 从上一个圈中的词连成词组 */
+$("#canvas").addEventListener("click", ev => {
+  const el = ev.target.closest(".tok");
+  if (!el) return;
+  const s = +el.dataset.s, e = +el.dataset.e;
+  const text = $("#sentence").value;
+
+  const hit = markAt(s);
+  if (hit && !ev.shiftKey) {
+    marks = marks.filter(k => k !== hit);
+    renderAll();
+    return;
+  }
+
+  if (ev.shiftKey && marks.length) {
+    // 挑离它最近的那个 mark，把中间的一切都吞进来
+    let best = marks[0], bestD = Infinity;
+    for (const k of marks) {
+      const d = s >= k.end ? s - k.end : (k.start >= e ? k.start - e : 0);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    const start = Math.min(best.start, s), end = Math.max(best.end, e);
+    marks = marks.filter(k => k.end <= start || k.start >= end); // 吃掉被覆盖的
+    const merged = { start, end, text: text.slice(start, end), lemma: "", zh: best.zh || "" };
+    marks.push(merged);
+    marks.sort((a, b) => a.start - b.start);
+    renderAll();
+    autoTranslate(merged);
+    return;
+  }
+
+  const mk = { start: s, end: e, text: text.slice(s, e), lemma: "", zh: "" };
+  marks.push(mk);
+  marks.sort((a, b) => a.start - b.start);
+  renderAll();
+  autoTranslate(mk);
+});
+
+/* ── 圈中的词：词形 + 释义，都可改 ───────────────────────── */
+function renderMarks() {
+  const box = $("#marks");
+  if (!marks.length) { box.innerHTML = '<div class="empty">还没圈词</div>'; return; }
+  box.innerHTML = marks.map((k, i) => `
+    <div class="mark">
+      <input data-i="${i}" data-f="lemma" value="${esc(k.lemma || k.text)}" placeholder="词形">
+      <input data-i="${i}" data-f="zh" value="${esc(k.zh)}" placeholder="中文释义">
+      <button class="del" data-i="${i}" title="去掉">✕</button>
+    </div>`).join("");
+}
+
+$("#marks").addEventListener("input", ev => {
+  const i = ev.target.dataset.i;
+  if (i === undefined) return;
+  marks[+i][ev.target.dataset.f] = ev.target.value;
+});
+
+$("#marks").addEventListener("click", ev => {
+  const b = ev.target.closest(".del");
+  if (!b) return;
+  marks.splice(+b.dataset.i, 1);
+  renderAll();
+});
+
+function renderAll() { renderCanvas(); renderMarks(); }
+
+/* ── 自动翻译（没配 Key 就安静地留空） ───────────────────── */
+async function autoTranslate(mk) {
+  const word = (mk.lemma || mk.text).trim();
+  if (!word || mk.zh) return;
+  try {
+    const r = await fetch("/api/translate?text=" + encodeURIComponent(word));
+    if (!r.ok) {
+      if (!noKeyWarned) { noKeyWarned = true; toast("⚠️ 自动翻译不可用：" + (await r.text()).trim()); }
+      return;
+    }
+    const d = await r.json();
+    if (marks.includes(mk) && !mk.zh) { mk.zh = d.text; renderMarks(); }
+  } catch (e) { /* 网络抽风就手填，不打扰 */ }
+}
+
+$("#btnTransAll").addEventListener("click", async () => {
+  const text = $("#sentence").value.trim();
+  if (!text) return;
+  const b = $("#btnTransAll");
+  b.disabled = true; b.textContent = "⏳ 翻译中";
+  try {
+    const r = await fetch("/api/translate?text=" + encodeURIComponent(text));
+    if (!r.ok) throw new Error((await r.text()).trim());
+    $("#trans").value = (await r.json()).text;
+  } catch (e) { toast("❌ " + e.message); }
+  b.disabled = false; b.textContent = "翻译整句";
+});
+
+/* ── 存 / 清空 ───────────────────────────────────────────── */
+async function save() {
+  const sentence = $("#sentence").value.trim();
+  if (!sentence) return toast("❌ 句子是空的");
+  if (!marks.length) return toast("❌ 一个词都没圈");
+
+  const body = {
+    id: editingId,
+    sentence,
+    trans: $("#trans").value.trim(),
+    source: $("#source").value.trim(),
+    note: $("#note").value.trim(),
+    marks: marks.map(k => ({
+      text: k.text, lemma: (k.lemma || "").trim(), zh: (k.zh || "").trim(),
+      start: k.start, end: k.end,
+    })),
+  };
+  const r = await fetch("/api/entries", {
+    method: editingId ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) return toast("❌ " + (await r.text()).trim());
+  toast(editingId ? "✅ 改好了" : "✅ 存了 " + marks.length + " 个词");
+  clearForm();
+  load();
+}
+
+function clearForm() {
+  editingId = "";
+  marks = [];
+  for (const id of ["#sentence", "#trans", "#source", "#note"]) $(id).value = "";
+  $("#editing").textContent = "";
+  renderAll();
+  $("#sentence").focus();
+}
+
+$("#btnSave").addEventListener("click", save);
+$("#btnClear").addEventListener("click", clearForm);
+document.addEventListener("keydown", ev => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); save(); }
+});
+
+// 粘贴/改句子后，原来的圈选下标就对不上了，直接清掉重圈
+let lastText = "";
+$("#sentence").addEventListener("input", () => {
+  if ($("#sentence").value !== lastText) { marks = []; lastText = $("#sentence").value; }
+  renderAll();
+});
+
+/* ── 列表 ────────────────────────────────────────────────── */
+function highlight(sentence, ms) {
+  const sorted = [...ms].filter(k => k.end > k.start).sort((a, b) => a.start - b.start);
+  let out = "", pos = 0;
+  for (const k of sorted) {
+    if (k.start < pos || k.end > sentence.length) continue; // 句子被改过、下标对不上就跳过
+    out += esc(sentence.slice(pos, k.start));
+    out += '<span class="hl">' + esc(sentence.slice(k.start, k.end)) + "</span>";
+    pos = k.end;
+  }
+  out += esc(sentence.slice(pos));
+  return out.replace(/\n/g, "<br>");
+}
+
+let cache = [];
+
+async function load() {
+  const q = $("#q").value.trim();
+  const r = await fetch("/api/entries?q=" + encodeURIComponent(q));
+  cache = await r.json() || [];
+  const words = new Set();
+  cache.forEach(e => e.marks.forEach(k => words.add(((k.lemma || k.text) || "").toLowerCase())));
+  $("#stat").textContent = `${cache.length} 句 · ${words.size} 个词`;
+
+  const box = $("#list");
+  if (!cache.length) {
+    box.innerHTML = '<div class="empty">' + (q ? "没搜到。" : "还没有。左边存第一条吧。") + "</div>";
+    return;
+  }
+  box.innerHTML = cache.map(e => {
+    const defs = e.marks.map(k =>
+      `<b>${esc(k.lemma || k.text)}</b>${k.zh ? " " + esc(k.zh) : ""}`).join(" · ");
+    const meta = [];
+    if (e.source) meta.push(esc(e.source));
+    meta.push((e.created_at || "").slice(0, 10));
+    return `<div class="entry">
+      <div class="sent">${highlight(e.sentence, e.marks)}</div>
+      ${e.trans ? `<div class="zh">${esc(e.trans)}</div>` : ""}
+      <div class="defs">${defs}</div>
+      ${e.note ? `<div class="zh">📌 ${esc(e.note)}</div>` : ""}
+      <div class="meta">
+        <span>${meta.join(" · ")}</span>
+        <button data-edit="${e.id}">编辑</button>
+        <button data-del="${e.id}">删除</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+$("#list").addEventListener("click", async ev => {
+  const ed = ev.target.dataset.edit, dl = ev.target.dataset.del;
+  if (ed) {
+    const e = cache.find(x => x.id === ed);
+    if (!e) return;
+    editingId = e.id;
+    $("#sentence").value = lastText = e.sentence;
+    $("#trans").value = e.trans || "";
+    $("#source").value = e.source || "";
+    $("#note").value = e.note || "";
+    marks = e.marks.map(k => ({ ...k }));
+    $("#editing").textContent = "正在编辑已存的这条";
+    renderAll();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (dl) {
+    if (!confirm("删掉这条？")) return;
+    const r = await fetch("/api/entries?id=" + encodeURIComponent(dl), { method: "DELETE" });
+    if (!r.ok) return toast("❌ " + (await r.text()).trim());
+    if (editingId === dl) clearForm();
+    toast("🗑️ 删了");
+    load();
+  }
+});
+
+let qt;
+$("#q").addEventListener("input", () => { clearTimeout(qt); qt = setTimeout(load, 180); });
+
+renderAll();
+load();
+$("#sentence").focus();
+</script>
+</body>
+</html>
