@@ -7,12 +7,14 @@
 <style>
   :root {
     --bg: #f6f5f2; --card: #fff; --fg: #1c1b19; --muted: #6b6864;
-    --line: #e2ded7; --accent: #b4530a; --mark: #ffe08a; --mark-line: #e0a300;
+    --line: #d8d3ca; --accent: #b4530a; --sel: #cfe4ff; --sel-line: #2f6fb8;
+    --mark: #ffe08a; --mark2: #ffc44d; --mark-line: #e0a300;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #16151a; --card: #201f26; --fg: #ece9e3; --muted: #979390;
-      --line: #34323b; --accent: #ffa458; --mark: #6a4a00; --mark-line: #d19b28;
+      --line: #3d3a45; --accent: #ffa458; --sel: #24405e; --sel-line: #63a4e8;
+      --mark: #6a4a00; --mark2: #8d6300; --mark-line: #d19b28;
     }
   }
   * { box-sizing: border-box; }
@@ -37,14 +39,13 @@
     background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; padding: 16px;
   }
-  .card + .card { margin-top: 14px; }
   h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
   textarea, input {
     width: 100%; background: transparent; color: var(--fg);
     border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
     font: inherit; outline: none;
   }
-  textarea { min-height: 88px; resize: vertical; }
+  textarea { min-height: 82px; resize: vertical; }
   textarea:focus, input:focus { border-color: var(--accent); }
   button {
     background: var(--accent); color: #fff; border: 0; border-radius: 8px;
@@ -55,43 +56,47 @@
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { color: var(--muted); font-size: 12.5px; }
 
-  /* 可点的句子 */
-  #canvas {
-    margin: 12px 0 4px; font-size: 19px; line-height: 2.05;
-    min-height: 42px; letter-spacing: .01em;
-  }
+  /* ── 可点的句子：词本身 + 词下面那根条 ───────────────── */
+  #canvas { margin: 14px 0 2px; font-size: 19px; line-height: 2.5; min-height: 46px; }
   #canvas .ph { color: var(--muted); font-size: 15px; }
-  .tok { cursor: pointer; border-radius: 5px; padding: 2px 1px; }
-  .tok:hover { background: var(--line); }
-  .tok.on, .hl {
-    background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-line);
-    border-radius: 5px; padding: 2px 3px;
+  .tk { position: relative; display: inline-block; padding-bottom: 13px; white-space: pre; }
+  .w { cursor: pointer; border-radius: 5px; padding: 1px 2px; }
+  .w:hover { background: var(--line); }
+  .w.sel { background: var(--sel); box-shadow: inset 0 -2px 0 var(--sel-line); }
+  .w.m1 { background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-line); }
+  .w.m2 { background: var(--mark2); box-shadow: inset 0 -2px 0 var(--mark-line); } /* 被两条以上盖住 */
+  .w.sel.m1, .w.sel.m2 { background: var(--sel); }
+  /* 条：命中区域高一点好点，可见的线用 ::after 画 */
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 13px; cursor: pointer; }
+  .bar::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 3px;
+    border-radius: 2px; background: var(--line);
   }
+  .bar:hover::after { background: var(--muted); }
+  .bar.mk::after { background: var(--mark-line); height: 4px; top: 4px; }
+  .bar.on::after { background: var(--sel-line); height: 4px; top: 4px; }
 
-  /* 圈中的词 */
-  .marks { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  /* ── 圈中的词 ───────────────────────────────────────── */
+  .marks { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
   .mark {
     display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr) auto;
     gap: 8px; align-items: center;
   }
   .mark input { padding: 6px 9px; }
-  .mark .del {
-    background: transparent; color: var(--muted); border: 0;
-    padding: 4px 6px; font-size: 16px; line-height: 1;
-  }
+  .mark input.phrase { border-color: var(--mark-line); }
+  .mark .del { background: transparent; color: var(--muted); border: 0; padding: 4px 6px; font-size: 16px; line-height: 1; }
   .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
 
-  /* 列表 */
+  /* ── 列表 ───────────────────────────────────────────── */
   .entry { border-top: 1px solid var(--line); padding: 13px 0; }
   .entry:first-child { border-top: 0; padding-top: 2px; }
   .entry .sent { font-size: 16px; line-height: 1.85; }
+  .hl { background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-line); border-radius: 4px; }
+  .hl2 { background: var(--mark2); box-shadow: inset 0 -2px 0 var(--mark-line); border-radius: 4px; }
   .entry .zh { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
   .entry .defs { margin-top: 6px; font-size: 13.5px; }
   .entry .defs b { font-weight: 600; }
-  .entry .meta {
-    margin-top: 6px; font-size: 12px; color: var(--muted);
-    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  }
+  .entry .meta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
   .entry .meta button { background: transparent; color: var(--muted); border: 0; padding: 0; font-size: 12px; }
   .entry .meta button:hover { color: var(--accent); text-decoration: underline; }
   #toast {
@@ -119,22 +124,24 @@
       <h2>① 粘句子</h2>
       <textarea id="sentence" placeholder="把整句粘进来，比如：She looked forward to the trip with a mixture of excitement and dread."></textarea>
 
-      <h2 style="margin-top:14px">② 点词圈中<span class="hint" style="font-weight:400">（shift+点相邻的词 = 并成词组）</span></h2>
+      <h2 style="margin-top:14px">② 选词<span class="hint" style="font-weight:400">　单词点词本身　·　词组点词下面那根条（连着几根就是一个词组）</span></h2>
       <div id="canvas"><span class="ph">上面粘句子，这里就能点了</span></div>
 
-      <div class="marks" id="marks"><div class="empty">还没圈词</div></div>
+      <div style="margin-top:10px" class="row">
+        <button id="btnAdd">加入并翻译</button>
+        <span class="hint" id="selInfo"></span>
+      </div>
+
+      <h2 style="margin-top:16px">③ 收进来的词</h2>
+      <div class="marks" id="marks"><div class="empty">还没选词</div></div>
 
       <div style="margin-top:14px" class="row">
         <input id="trans" placeholder="整句意思（可留空）" style="flex:1 1 260px">
         <button class="ghost" id="btnTransAll">翻译整句</button>
       </div>
-      <div style="margin-top:8px" class="row">
-        <input id="source" placeholder="出处：书名 / 网址 / 播客" style="flex:1 1 160px">
-        <input id="note" placeholder="备注：为什么记它" style="flex:2 1 200px">
-      </div>
 
       <div style="margin-top:14px" class="row">
-        <button id="btnSave">保存　<span class="hint" style="color:#fff;opacity:.75">Ctrl+Enter</span></button>
+        <button id="btnSave">保存　<span class="hint" style="color:#fff;opacity:.75">Enter</span></button>
         <button class="ghost" id="btnClear">清空</button>
         <span class="hint" id="editing"></span>
       </div>
@@ -155,7 +162,10 @@
 const $ = s => document.querySelector(s);
 const esc = s => (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-let marks = [];        // {start, end, text, lemma, zh}
+let words = [];           // 切出来的词：{s, e, tail}，tail 是词后面紧跟的空白（让条连起来）
+let selWords = new Set(); // 单独选中的词（下标）
+let selBars  = new Set(); // 条被点亮的词（下标），连着的一段 = 一个词组
+let marks = [];           // 已经收进来的：{start, end, text, lemma, zh}，允许互相重叠
 let editingId = "";
 let noKeyWarned = false;
 
@@ -164,95 +174,175 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(t._t);
-  t._t = setTimeout(() => t.classList.remove("show"), 1900);
+  t._t = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-/* ── 切词 + 画出可点的句子 ───────────────────────────────── */
-// 用 Unicode 属性匹配，法语/西语的重音字母不会被切开；词内的 ' 和 - 也留着（don't、well-known）
+/* ── 切词 ─────────────────────────────────────────────────
+   用 Unicode 属性匹配，重音字母不会被切开；词内的 ' 和 - 留着（don't、well-known）*/
 const WORD_RE = /[\p{L}\p{M}][\p{L}\p{M}'’\-]*/gu;
 
-function tokenize(text) {
-  const out = [];
+// segs：按顺序的片段，word 的带 wi（第几个词）
+function segment(text) {
+  const segs = [], ws = [];
   let last = 0, m;
   WORD_RE.lastIndex = 0;
   while ((m = WORD_RE.exec(text)) !== null) {
-    if (m.index > last) out.push({ word: false, s: last, e: m.index });
-    out.push({ word: true, s: m.index, e: m.index + m[0].length });
-    last = m.index + m[0].length;
+    if (m.index > last) segs.push({ word: false, s: last, e: m.index });
+    // 词后面紧跟的横向空白算进这个词的格子，这样相邻两根条能连成一条线
+    let te = m.index + m[0].length;
+    while (te < text.length && (text[te] === " " || text[te] === "\t")) te++;
+    const wi = ws.length;
+    ws.push({ s: m.index, e: m.index + m[0].length, tailEnd: te });
+    segs.push({ word: true, wi, s: m.index, e: te });
+    last = te;
   }
-  if (last < text.length) out.push({ word: false, s: last, e: text.length });
-  return out;
+  if (last < text.length) segs.push({ word: false, s: last, e: text.length });
+  words = ws;
+  return segs;
 }
 
-function markAt(pos) {
-  return marks.find(k => pos >= k.start && pos < k.end);
+/* ── 画句子 ──────────────────────────────────────────── */
+// 盖住第 i 个词的 mark 有几条（用来分 m1 / m2 两档底色）
+function depthAt(i) {
+  const w = words[i];
+  return marks.filter(k => w.s >= k.start && w.e <= k.end).length;
+}
+// 这个词是不是某个「跨多个词」的 mark 的一部分——是就把条画成黄的，词组一眼看得出
+function inPhrase(i) {
+  const w = words[i];
+  return marks.some(k => w.s >= k.start && w.e <= k.end && (k.end - k.start) > (w.e - w.s));
 }
 
 function renderCanvas() {
   const text = $("#sentence").value;
   const box = $("#canvas");
-  if (!text.trim()) {
-    box.innerHTML = '<span class="ph">上面粘句子，这里就能点了</span>';
-    return;
-  }
+  if (!text.trim()) { words = []; box.innerHTML = '<span class="ph">上面粘句子，这里就能点了</span>'; return; }
+
   let html = "";
-  for (const t of tokenize(text)) {
-    const chunk = esc(text.slice(t.s, t.e));
-    if (!t.word) { html += chunk.replace(/\n/g, "<br>"); continue; }
-    const on = markAt(t.s) ? " on" : "";
-    html += `<span class="tok${on}" data-s="${t.s}" data-e="${t.e}">${chunk}</span>`;
+  for (const sg of segment(text)) {
+    if (!sg.word) {
+      html += esc(text.slice(sg.s, sg.e)).replace(/\n/g, "<br>");
+      continue;
+    }
+    const w = words[sg.wi];
+    const d = depthAt(sg.wi);
+    const cls = ["w"];
+    if (selWords.has(sg.wi)) cls.push("sel");
+    if (d === 1) cls.push("m1"); else if (d > 1) cls.push("m2");
+    const barCls = ["bar"];
+    if (selBars.has(sg.wi)) barCls.push("on"); else if (inPhrase(sg.wi)) barCls.push("mk");
+    html += `<span class="tk" data-i="${sg.wi}">` +
+              `<span class="${cls.join(" ")}" data-w="${sg.wi}">${esc(text.slice(w.s, w.e))}</span>` +
+              esc(text.slice(w.e, w.tailEnd)) +
+              `<span class="${barCls.join(" ")}" data-b="${sg.wi}"></span>` +
+            `</span>`;
   }
   box.innerHTML = html;
+  renderSelInfo();
 }
 
-/* 点词：已圈中的再点一次取消；shift+点 = 从上一个圈中的词连成词组 */
+function renderSelInfo() {
+  const runs = barRuns();
+  const bits = [];
+  if (selWords.size) bits.push(`${selWords.size} 个单词`);
+  if (runs.length) bits.push(`${runs.length} 个词组`);
+  $("#selInfo").textContent = bits.length ? "待加入：" + bits.join(" + ") : "点词 / 点条来选";
+}
+
+// 连着的条 = 一个词组。下标连续就算连着（中间隔着标点也算，比如 "as a result,"）
+function barRuns() {
+  const idx = [...selBars].sort((a, b) => a - b);
+  const runs = [];
+  for (const i of idx) {
+    const last = runs[runs.length - 1];
+    if (last && i === last[last.length - 1] + 1) last.push(i);
+    else runs.push([i]);
+  }
+  return runs;
+}
+
 $("#canvas").addEventListener("click", ev => {
-  const el = ev.target.closest(".tok");
-  if (!el) return;
-  const s = +el.dataset.s, e = +el.dataset.e;
-  const text = $("#sentence").value;
-
-  const hit = markAt(s);
-  if (hit && !ev.shiftKey) {
-    marks = marks.filter(k => k !== hit);
-    renderAll();
+  const bar = ev.target.closest(".bar");
+  if (bar) {
+    const i = +bar.dataset.b;
+    selBars.has(i) ? selBars.delete(i) : selBars.add(i);
+    renderCanvas();
     return;
   }
-
-  if (ev.shiftKey && marks.length) {
-    // 挑离它最近的那个 mark，把中间的一切都吞进来
-    let best = marks[0], bestD = Infinity;
-    for (const k of marks) {
-      const d = s >= k.end ? s - k.end : (k.start >= e ? k.start - e : 0);
-      if (d < bestD) { bestD = d; best = k; }
-    }
-    const start = Math.min(best.start, s), end = Math.max(best.end, e);
-    marks = marks.filter(k => k.end <= start || k.start >= end); // 吃掉被覆盖的
-    const merged = { start, end, text: text.slice(start, end), lemma: "", zh: best.zh || "" };
-    marks.push(merged);
-    marks.sort((a, b) => a.start - b.start);
-    renderAll();
-    autoTranslate(merged);
-    return;
+  const w = ev.target.closest(".w");
+  if (w) {
+    const i = +w.dataset.w;
+    selWords.has(i) ? selWords.delete(i) : selWords.add(i);
+    renderCanvas();
   }
-
-  const mk = { start: s, end: e, text: text.slice(s, e), lemma: "", zh: "" };
-  marks.push(mk);
-  marks.sort((a, b) => a.start - b.start);
-  renderAll();
-  autoTranslate(mk);
 });
 
-/* ── 圈中的词：词形 + 释义，都可改 ───────────────────────── */
+/* ── 加入并翻译 ───────────────────────────────────────── */
+async function addSelection() {
+  const text = $("#sentence").value;
+  if (!selWords.size && !selBars.size) return toast("❌ 还没选词");
+
+  const wanted = [];
+  for (const i of [...selWords].sort((a, b) => a - b)) {
+    wanted.push({ start: words[i].s, end: words[i].e });
+  }
+  for (const run of barRuns()) {
+    wanted.push({ start: words[run[0]].s, end: words[run[run.length - 1]].e });
+  }
+
+  const fresh = [];
+  let dup = 0;
+  for (const r of wanted) {
+    // 同一段范围已经收过就跳过；但「单词」和「含它的词组」范围不同，两条都留 —— 这是要的
+    if (marks.some(k => k.start === r.start && k.end === r.end)) { dup++; continue; }
+    const mk = { start: r.start, end: r.end, text: text.slice(r.start, r.end), lemma: "", zh: "" };
+    marks.push(mk);
+    fresh.push(mk);
+  }
+  marks.sort((a, b) => a.start - b.start || b.end - a.end);
+  selWords.clear();
+  selBars.clear();
+  renderAll();
+
+  if (dup) toast(`⏭️ ${dup} 个已经收过了`);
+  if (!fresh.length) return;
+
+  const btn = $("#btnAdd");
+  btn.disabled = true; btn.textContent = "⏳ 翻译中";
+  await Promise.all(fresh.map(translateMark));
+  btn.disabled = false; btn.textContent = "加入并翻译";
+  renderMarks();
+}
+
+async function translateMark(mk) {
+  const word = (mk.lemma || mk.text).trim();
+  if (!word || mk.zh) return;
+  try {
+    const r = await fetch("/api/translate?text=" + encodeURIComponent(word));
+    if (!r.ok) {
+      if (!noKeyWarned) { noKeyWarned = true; toast("⚠️ 自动翻译不可用：" + (await r.text()).trim()); }
+      return;
+    }
+    const d = await r.json();
+    if (marks.includes(mk) && !mk.zh) mk.zh = d.text;
+  } catch (e) { /* 网络抽风就手填，不打扰 */ }
+}
+
+$("#btnAdd").addEventListener("click", addSelection);
+
+/* ── 收进来的词：词形 + 释义都可改 ─────────────────────── */
 function renderMarks() {
   const box = $("#marks");
-  if (!marks.length) { box.innerHTML = '<div class="empty">还没圈词</div>'; return; }
-  box.innerHTML = marks.map((k, i) => `
-    <div class="mark">
-      <input data-i="${i}" data-f="lemma" value="${esc(k.lemma || k.text)}" placeholder="词形">
+  if (!marks.length) { box.innerHTML = '<div class="empty">还没选词</div>'; return; }
+  box.innerHTML = marks.map((k, i) => {
+    const isPhrase = /[\s\p{P}]/u.test(k.text.trim());
+    return `<div class="mark">
+      <input class="${isPhrase ? "phrase" : ""}" data-i="${i}" data-f="lemma"
+             value="${esc(k.lemma || k.text)}" placeholder="词形">
       <input data-i="${i}" data-f="zh" value="${esc(k.zh)}" placeholder="中文释义">
       <button class="del" data-i="${i}" title="去掉">✕</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
 $("#marks").addEventListener("input", ev => {
@@ -270,21 +360,6 @@ $("#marks").addEventListener("click", ev => {
 
 function renderAll() { renderCanvas(); renderMarks(); }
 
-/* ── 自动翻译（没配 Key 就安静地留空） ───────────────────── */
-async function autoTranslate(mk) {
-  const word = (mk.lemma || mk.text).trim();
-  if (!word || mk.zh) return;
-  try {
-    const r = await fetch("/api/translate?text=" + encodeURIComponent(word));
-    if (!r.ok) {
-      if (!noKeyWarned) { noKeyWarned = true; toast("⚠️ 自动翻译不可用：" + (await r.text()).trim()); }
-      return;
-    }
-    const d = await r.json();
-    if (marks.includes(mk) && !mk.zh) { mk.zh = d.text; renderMarks(); }
-  } catch (e) { /* 网络抽风就手填，不打扰 */ }
-}
-
 $("#btnTransAll").addEventListener("click", async () => {
   const text = $("#sentence").value.trim();
   if (!text) return;
@@ -298,18 +373,16 @@ $("#btnTransAll").addEventListener("click", async () => {
   b.disabled = false; b.textContent = "翻译整句";
 });
 
-/* ── 存 / 清空 ───────────────────────────────────────────── */
+/* ── 存 / 清空 ───────────────────────────────────────── */
 async function save() {
   const sentence = $("#sentence").value.trim();
   if (!sentence) return toast("❌ 句子是空的");
-  if (!marks.length) return toast("❌ 一个词都没圈");
+  if (!marks.length) return toast("❌ 一个词都没收进来");
 
   const body = {
     id: editingId,
     sentence,
     trans: $("#trans").value.trim(),
-    source: $("#source").value.trim(),
-    note: $("#note").value.trim(),
     marks: marks.map(k => ({
       text: k.text, lemma: (k.lemma || "").trim(), zh: (k.zh || "").trim(),
       start: k.start, end: k.end,
@@ -321,7 +394,7 @@ async function save() {
     body: JSON.stringify(body),
   });
   if (!r.ok) return toast("❌ " + (await r.text()).trim());
-  toast(editingId ? "✅ 改好了" : "✅ 存了 " + marks.length + " 个词");
+  toast(editingId ? "✅ 改好了" : `✅ 存了 ${marks.length} 条`);
   clearForm();
   load();
 }
@@ -329,7 +402,10 @@ async function save() {
 function clearForm() {
   editingId = "";
   marks = [];
-  for (const id of ["#sentence", "#trans", "#source", "#note"]) $(id).value = "";
+  selWords.clear();
+  selBars.clear();
+  $("#sentence").value = ""; $("#trans").value = "";
+  lastText = "";
   $("#editing").textContent = "";
   renderAll();
   $("#sentence").focus();
@@ -337,29 +413,45 @@ function clearForm() {
 
 $("#btnSave").addEventListener("click", save);
 $("#btnClear").addEventListener("click", clearForm);
+
+// Enter：有待加入的选择就先加入，否则保存。shift+Enter 不管（textarea 自带换行）。
+// isComposing / 229 要挡住，不然 fcitx5 选词按的那下回车会被当成提交。
 document.addEventListener("keydown", ev => {
-  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); save(); }
+  if (ev.key !== "Enter" || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.isComposing || ev.keyCode === 229) return;
+  ev.preventDefault();
+  if (selWords.size || selBars.size) addSelection(); else save();
 });
 
-// 粘贴/改句子后，原来的圈选下标就对不上了，直接清掉重圈
+// 句子被改过，原来的下标就作废了，清掉重选
 let lastText = "";
 $("#sentence").addEventListener("input", () => {
-  if ($("#sentence").value !== lastText) { marks = []; lastText = $("#sentence").value; }
+  if ($("#sentence").value !== lastText) {
+    lastText = $("#sentence").value;
+    marks = []; selWords.clear(); selBars.clear();
+  }
   renderAll();
 });
 
-/* ── 列表 ────────────────────────────────────────────────── */
+/* ── 列表 ────────────────────────────────────────────── */
+// 逐字数「被几条 mark 盖住」，所以单词和词组重叠时两层都看得见
 function highlight(sentence, ms) {
-  const sorted = [...ms].filter(k => k.end > k.start).sort((a, b) => a.start - b.start);
-  let out = "", pos = 0;
-  for (const k of sorted) {
-    if (k.start < pos || k.end > sentence.length) continue; // 句子被改过、下标对不上就跳过
-    out += esc(sentence.slice(pos, k.start));
-    out += '<span class="hl">' + esc(sentence.slice(k.start, k.end)) + "</span>";
-    pos = k.end;
+  const n = sentence.length;
+  const depth = new Array(n).fill(0);
+  for (const k of ms) {
+    if (!(k.end > k.start) || k.start < 0 || k.end > n) continue; // 句子改过、下标对不上就跳过
+    for (let i = k.start; i < k.end; i++) depth[i]++;
   }
-  out += esc(sentence.slice(pos));
-  return out.replace(/\n/g, "<br>");
+  let out = "", i = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n && depth[j] === depth[i]) j++;
+    const chunk = esc(sentence.slice(i, j)).replace(/\n/g, "<br>");
+    out += depth[i] === 0 ? chunk
+         : `<span class="${depth[i] === 1 ? "hl" : "hl2"}">${chunk}</span>`;
+    i = j;
+  }
+  return out;
 }
 
 let cache = [];
@@ -368,9 +460,9 @@ async function load() {
   const q = $("#q").value.trim();
   const r = await fetch("/api/entries?q=" + encodeURIComponent(q));
   cache = await r.json() || [];
-  const words = new Set();
-  cache.forEach(e => e.marks.forEach(k => words.add(((k.lemma || k.text) || "").toLowerCase())));
-  $("#stat").textContent = `${cache.length} 句 · ${words.size} 个词`;
+  const ws = new Set();
+  cache.forEach(e => e.marks.forEach(k => ws.add(((k.lemma || k.text) || "").toLowerCase())));
+  $("#stat").textContent = `${cache.length} 句 · ${ws.size} 条词`;
 
   const box = $("#list");
   if (!cache.length) {
@@ -380,16 +472,12 @@ async function load() {
   box.innerHTML = cache.map(e => {
     const defs = e.marks.map(k =>
       `<b>${esc(k.lemma || k.text)}</b>${k.zh ? " " + esc(k.zh) : ""}`).join(" · ");
-    const meta = [];
-    if (e.source) meta.push(esc(e.source));
-    meta.push((e.created_at || "").slice(0, 10));
     return `<div class="entry">
       <div class="sent">${highlight(e.sentence, e.marks)}</div>
       ${e.trans ? `<div class="zh">${esc(e.trans)}</div>` : ""}
       <div class="defs">${defs}</div>
-      ${e.note ? `<div class="zh">📌 ${esc(e.note)}</div>` : ""}
       <div class="meta">
-        <span>${meta.join(" · ")}</span>
+        <span>${(e.created_at || "").slice(0, 10)}</span>
         <button data-edit="${e.id}">编辑</button>
         <button data-del="${e.id}">删除</button>
       </div>
@@ -405,9 +493,8 @@ $("#list").addEventListener("click", async ev => {
     editingId = e.id;
     $("#sentence").value = lastText = e.sentence;
     $("#trans").value = e.trans || "";
-    $("#source").value = e.source || "";
-    $("#note").value = e.note || "";
     marks = e.marks.map(k => ({ ...k }));
+    selWords.clear(); selBars.clear();
     $("#editing").textContent = "正在编辑已存的这条";
     renderAll();
     window.scrollTo({ top: 0, behavior: "smooth" });

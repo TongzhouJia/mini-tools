@@ -3,10 +3,11 @@
 // 解决的问题：单独记一个词等于没记——不知道它在句子里怎么用、搭配什么介词、
 // 什么语气。所以这里的最小单位不是「词」，而是「一整句 + 句里圈出来的那几个词」。
 //
-// 用法：把读到的句子粘进来，句子会自动切成一个个可点的词，点谁谁高亮
-// （shift+点 = 把连着的几个词并成一个词组，比如 "look forward to"）。
-// 配了 GOOGLE_TRANSLATE_API_KEY 的话，圈中的词会自动填上中文，可以改。
-// Ctrl+Enter 存盘。
+// 用法：把读到的句子粘进来，句子会自动切成一个个可点的词。
+// 点词本身 = 收这一个单词；点词下面那根条 = 词组，连着点几根就把这几个词
+// 连成一个词组（"look forward to"）。两种可以叠着用——同一个词既能单独收一遍，
+// 又能作为词组的一部分再收一遍，互不影响。选完按「加入并翻译」，
+// 配了 GOOGLE_TRANSLATE_API_KEY 就自动填中文（可改）。Enter 存盘。
 //
 // 存的是 JSONL（一行一条，data/context_vocab/entries.jsonl），
 // 另外能导出两列的 CSV（英文,中文），跟 vocabulary_comparison / pdf_reader
@@ -77,7 +78,7 @@ func main() {
 
 	fmt.Printf("📝 上下文单词本起来了：http://localhost:%s\n", port)
 	fmt.Printf("   数据文件：%s（已有 %d 条句子）\n", entriesPath(), countEntries())
-	fmt.Printf("   粘句子 → 点词圈中（shift+点 = 连成词组）→ Ctrl+Enter 存\n")
+	fmt.Printf("   粘句子 → 点词（单词）/ 点词下面的条（词组）→ 加入并翻译 → Enter 存\n")
 	fmt.Printf("   自动翻译 %s：%s\n", transTo, tick(translateKey != ""))
 
 	if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
