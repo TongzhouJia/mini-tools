@@ -225,6 +225,22 @@ func nextGap() time.Duration {
 
 // ---------- 采样循环 ----------
 
+// 按墙上时钟等到 target。不能直接 time.Sleep(gap)——那用的是单调时钟，
+// 机器挂起期间它不走。电脑一睡一整夜，醒来之后计时器还剩大半没走完，
+// 于是整个上午一次都不弹（2026-08-06 就这么丢了一上午）。
+func sleepUntil(target time.Time) {
+	for {
+		left := time.Until(target)
+		if left <= 0 {
+			return
+		}
+		if left > 30*time.Second {
+			left = 30 * time.Second
+		}
+		time.Sleep(left)
+	}
+}
+
 func pingLoop(w window) {
 	lastAt := time.Now()
 	first := true
@@ -240,7 +256,7 @@ func pingLoop(w window) {
 		next := time.Now().Add(gap)
 		setNextPing(next)
 		fmt.Printf("⏳ 下一次采样：%s（%.0f 分钟后）\n", next.Format("15:04"), gap.Minutes())
-		time.Sleep(gap)
+		sleepUntil(next)
 
 		now := time.Now()
 		if !w.contains(now) {

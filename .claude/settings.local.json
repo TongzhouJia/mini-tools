@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(whisper-cli --help)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
+    ]
+  }
+}

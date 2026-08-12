@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -49,8 +50,26 @@ func checkDeps() error {
 }
 
 func main() {
+	singleFile := flag.String("f", "", "只处理这一个音视频文件（给了就跳过交互式输入文件夹）")
+	flag.Parse()
+
 	if err := checkDeps(); err != nil {
 		fmt.Println(err)
+		return
+	}
+
+	// -f 指定单个文件时，直接处理它，不再问文件夹
+	if p := cleanPath(*singleFile); p != "" {
+		info, err := os.Stat(p)
+		if err != nil {
+			fmt.Printf("❌ 找不到文件: %s\n", p)
+			return
+		}
+		if info.IsDir() {
+			fmt.Printf("❌ -f 要的是文件不是文件夹: %s\n", p)
+			return
+		}
+		process([]string{p})
 		return
 	}
 
@@ -107,6 +126,11 @@ func main() {
 		return
 	}
 
+	process(files)
+}
+
+// process 逐个转写，已经有 .txt 的直接跳过（可续跑）。
+func process(files []string) {
 	fmt.Printf("共找到 %d 个文件，开始逐个处理...\n\n", len(files))
 
 	var done, skipped, failed int
@@ -127,7 +151,7 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("✅ 完成：%s.txt\n\n", outputBase)
+		fmt.Printf("✅ 完成：%s.txt / .srt\n\n", outputBase)
 		done++
 	}
 
@@ -160,13 +184,14 @@ func transcribe(inputPath, outputBase string) error {
 		return fmt.Errorf("音频提取失败: %w", err)
 	}
 
-	// 2. 用 whisper-cli 识别，输出到与原文件同名的 .txt
+	// 2. 用 whisper-cli 识别，输出与原文件同名的 .txt（纯文本）和 .srt（带时间轴的字幕）
 	fmt.Println("🗣️  正在语音转文字...")
 	whisperCmd := exec.Command(whisperBin,
 		"-m", modelPath,
 		"-f", wavPath,
 		"-l", "auto",
 		"-otxt",
+		"-osrt",
 		"-of", outputBase,
 		"-pp",
 	)
