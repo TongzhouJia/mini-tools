@@ -43,6 +43,9 @@ type Entry struct {
 	Marks     []Mark `json:"marks"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+
+	// TaskID 只有从 Google Tasks 导进来的才有，用来认出「这条已经导过了」。
+	TaskID string `json:"task_id,omitempty"`
 }
 
 var (
@@ -154,6 +157,77 @@ func saveEntry(e Entry) (Entry, error) {
 		return Entry{}, fmt.Errorf("存盘失败：%w", err)
 	}
 	return e, nil
+}
+
+// importEntries 批量落盘（从 Google Tasks 导过来的那批）：ID 已经在了就更新，
+// 否则新增。一次锁、一次 flush，几百条也只写一遍盘。
+//
+// ⚠️ 已存在的条目一律**保留原来的 created_at**：那是「第一次收这个词」的日子，
+// 复习节奏全靠它算。他回头去手机上改个错别字，Tasks 的 updated 会变，
+// 但复习进度不能跟着被重置。
+func importEntries(in []Entry) (added, updated, same int, err error) {
+	if len(in) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	idx := make(map[string]int, len(entries))
+	for i, e := range entries {
+		idx[e.ID] = i
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	dirty := false
+
+	for _, e := range in {
+		i, exists := idx[e.ID]
+		if !exists {
+			e.UpdatedAt = now
+			if e.CreatedAt == "" {
+				e.CreatedAt = now
+			}
+			idx[e.ID] = len(entries)
+			entries = append(entries, e)
+			added++
+			dirty = true
+			continue
+		}
+
+		old := entries[i]
+		e.CreatedAt = old.CreatedAt
+		e.Trans = old.Trans // 整句翻译和备注是他在网页里补的，Tasks 那边没有，别覆盖掉
+		e.Note = old.Note
+		if sameContent(old, e) {
+			same++
+			continue
+		}
+		e.UpdatedAt = now
+		entries[i] = e
+		updated++
+		dirty = true
+	}
+
+	if dirty {
+		if err := flush(); err != nil {
+			return added, updated, same, fmt.Errorf("存盘失败：%w", err)
+		}
+	}
+	return added, updated, same, nil
+}
+
+// sameContent 比句子和词，不比时间戳——否则每次导入都判定成「变了」，白写一遍盘。
+func sameContent(a, b Entry) bool {
+	if a.Sentence != b.Sentence || a.Source != b.Source || len(a.Marks) != len(b.Marks) {
+		return false
+	}
+	for i := range a.Marks {
+		if a.Marks[i] != b.Marks[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func deleteEntry(id string) error {

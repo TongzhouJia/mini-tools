@@ -33,10 +33,15 @@ var indexHTML []byte
 const defaultPort = "8085"
 
 var (
-	dataDir string
-	port    string
-	envPath string
-	transTo string
+	dataDir   string
+	port      string
+	envPath   string
+	transTo   string
+	tasksList string
+	reviewRaw string
+	doImport  bool
+	doMail    bool
+	dryRun    bool
 )
 
 func home() string {
@@ -59,6 +64,11 @@ func main() {
 	flag.StringVar(&port, "port", envOr("CONTEXT_VOCAB_PORT", defaultPort), "监听端口")
 	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY")
 	flag.StringVar(&transTo, "to", "zh-CN", "自动翻译成哪种语言")
+	flag.StringVar(&tasksList, "tasks-list", envOr("VOCAB_TASKS_LIST", defaultTasksList), "从哪个 Google Tasks 列表导词")
+	flag.StringVar(&reviewRaw, "review-days", envOr("VOCAB_REVIEW_DAYS", defaultReviewDays), "复习间隔（天，逗号分隔）")
+	flag.BoolVar(&doImport, "import", false, "从 Tasks 导一次词就退出，不起服务")
+	flag.BoolVar(&doMail, "mail", false, "导入 + 发一封单词日报就退出（给定时器用）")
+	flag.BoolVar(&dryRun, "dry-run", false, "配合 -mail：只把信打到终端，不真发")
 	flag.Parse()
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -71,8 +81,15 @@ func main() {
 	// Key 缺了不致命：句子和词照样存，中文列留空自己填
 	initTranslate(envPath)
 
+	// 一次性模式：给 systemd timer 用的，干完就退，不起服务
+	if doImport || doMail {
+		runOnce()
+		return
+	}
+
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/entries", logged("/api/entries", handleEntries))
+	http.HandleFunc("/api/import-tasks", logged("/api/import-tasks", handleImportTasks))
 	http.HandleFunc("/api/translate", logged("/api/translate", handleTranslate))
 	http.HandleFunc("/api/export.csv", logged("/api/export.csv", handleExportCSV))
 
@@ -80,10 +97,65 @@ func main() {
 	fmt.Printf("   数据文件：%s（已有 %d 条句子）\n", entriesPath(), countEntries())
 	fmt.Printf("   粘句子 → 点词（单词）/ 点词下面的条（词组）→ 加入并翻译 → Enter 存\n")
 	fmt.Printf("   自动翻译 %s：%s\n", transTo, tick(translateKey != ""))
+	fmt.Printf("   手机上记的词：点页面右上角「从 Task 导入」，拉「%s」列表\n", tasksList)
 
 	if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
 		log.Fatalf("❌ 起不来（端口被占了？换 -port）：%v", err)
 	}
+}
+
+// runOnce 是 -import / -mail 干的活：先从 Tasks 拉词，要发信再发一封日报。
+// 导入失败不挡发信——词不全也比一天没信强，正文顶上会写清楚。
+func runOnce() {
+	var warn string
+	res, err := importTasks(tasksList)
+	if err != nil {
+		warn = fmt.Sprintf("从「%s」导词失败：%v", tasksList, err)
+		log.Print(warn)
+	} else {
+		fmt.Printf("从「%s」导词：%s\n", tasksList, res)
+		for _, s := range res.Skipped {
+			fmt.Printf("   跳过：%s\n", s)
+		}
+	}
+
+	if !doMail {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
+	subject, body := buildDigest(time.Now(), parseReviewDays(reviewRaw))
+	if warn != "" {
+		body = warn + "\n（所以这封信里的词可能不全）\n\n" + body
+	}
+	if dryRun {
+		fmt.Printf("\n主题：%s\n\n%s", subject, body)
+		return
+	}
+	if err := sendMail(subject, body); err != nil {
+		log.Fatalf("日报没发出去：%v", err)
+	}
+	fmt.Printf("日报已发：%s\n", subject)
+}
+
+// handleImportTasks 网页上那个「从 Task 导入」按钮
+func handleImportTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "要用 POST", http.StatusMethodNotAllowed)
+		return
+	}
+	list := strings.TrimSpace(r.URL.Query().Get("list"))
+	if list == "" {
+		list = tasksList
+	}
+	res, err := importTasks(list)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {

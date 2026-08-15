@@ -114,6 +114,7 @@
   <span class="hint" id="stat"></span>
   <span class="sp"></span>
   <input id="q" placeholder="搜句子 / 词 / 释义" style="width: 220px;">
+  <button class="ghost" id="btnImport" title="把手机 Google Tasks「单词积累」列表里的词拉进来">从 Task 导入</button>
   <a href="/api/export.csv" download>导出 CSV</a>
   <a href="/api/export.csv?full=1" download>带例句</a>
 </header>
@@ -511,6 +512,28 @@ $("#list").addEventListener("click", async ev => {
 
 let qt;
 $("#q").addEventListener("input", () => { clearTimeout(qt); qt = setTimeout(load, 180); });
+
+// 手机上往 Google Tasks 的「单词积累」里记的词，一键拉进来。
+// 反复点没关系，同一条任务只会更新不会重复。
+$("#btnImport").addEventListener("click", async () => {
+  const b = $("#btnImport");
+  b.disabled = true; b.textContent = "导入中…";
+  try {
+    const r = await fetch("/api/import-tasks", { method: "POST" });
+    const txt = await r.text();
+    if (!r.ok) throw new Error(txt.trim());
+    const d = JSON.parse(txt);
+    let msg = d.added ? `导入 ${d.added} 个新词` : "没有新词";
+    if (d.updated) msg += `，更新 ${d.updated} 个`;
+    if (d.skipped && d.skipped.length) msg += `，跳过 ${d.skipped.length} 个（${d.skipped[0]}）`;
+    toast(msg);
+    load();
+  } catch (e) {
+    toast("导入失败：" + e.message);
+  } finally {
+    b.disabled = false; b.textContent = "从 Task 导入";
+  }
+});
 
 renderAll();
 load();
