@@ -24,6 +24,10 @@ type Mark struct {
 	Zh    string `json:"zh"`    // 中文释义，可以自动填也可以手改
 	Start int    `json:"start"`
 	End   int    `json:"end"`
+
+	// TaskID 是这个词在 Google Tasks「单词积累」里对应的那条任务。
+	// 非空 = 两边已经对上了：既不用再推一遍，导入时也不会再收一遍（防来回打架）。
+	TaskID string `json:"task_id,omitempty"`
 }
 
 // Word 返回这条 mark 该以什么形式进单词本
@@ -143,6 +147,7 @@ func saveEntry(e Entry) (Entry, error) {
 		for i, old := range entries {
 			if old.ID == e.ID {
 				e.CreatedAt = old.CreatedAt
+				e = keepTaskIDs(old, e)
 				entries[i] = e
 				found = true
 				break
@@ -228,6 +233,92 @@ func sameContent(a, b Entry) bool {
 		}
 	}
 	return true
+}
+
+// keepTaskIDs 把旧版本里「这个词已经同步到哪条任务」的对应关系接过来。
+// 前端改完一条重新提交时 marks 里是不带 task_id 的，不接一下两边就断了，
+// 下次导入会把同一个词再收一遍。
+func keepTaskIDs(old, next Entry) Entry {
+	if next.TaskID == "" {
+		next.TaskID = old.TaskID
+	}
+	byWord := make(map[string]string, len(old.Marks))
+	for _, m := range old.Marks {
+		if m.TaskID != "" {
+			byWord[strings.ToLower(m.Word())] = m.TaskID
+		}
+	}
+	for i, m := range next.Marks {
+		if m.TaskID == "" {
+			next.Marks[i].TaskID = byWord[strings.ToLower(m.Word())]
+		}
+	}
+	return next
+}
+
+// snapshotEntries 拷一份出来给要打网络的活用——别攥着锁去等 Google。
+func snapshotEntries() []Entry {
+	mu.Lock()
+	defer mu.Unlock()
+	out := make([]Entry, len(entries))
+	copy(out, entries)
+	return out
+}
+
+// syncedWords 是已经在 Google Tasks 里有对应任务的词（小写）。推之前拿它挡重复。
+func syncedWords() map[string]bool {
+	mu.Lock()
+	defer mu.Unlock()
+	out := map[string]bool{}
+	for _, e := range entries {
+		for _, m := range e.Marks {
+			if m.TaskID != "" {
+				out[strings.ToLower(m.Word())] = true
+			}
+		}
+	}
+	return out
+}
+
+// claimedTasks 是「任务 id -> 本地哪条记着它」。导入时拿它认出自己推上去的那些任务，
+// 别再当成新词收一遍（推出去、又导回来 = 同一个词两条，来回打架）。
+func claimedTasks() map[string]string {
+	mu.Lock()
+	defer mu.Unlock()
+	out := map[string]string{}
+	for _, e := range entries {
+		if e.TaskID != "" {
+			out[e.TaskID] = e.ID
+		}
+		for _, m := range e.Marks {
+			if m.TaskID != "" {
+				out[m.TaskID] = e.ID
+			}
+		}
+	}
+	return out
+}
+
+// setMarkTaskIDs 把刚推上去拿到的 task id 记回对应的词，一次锁一次 flush。
+func setMarkTaskIDs(entryID string, ids map[string]string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
+	for i, e := range entries {
+		if e.ID != entryID {
+			continue
+		}
+		for j, m := range e.Marks {
+			if id, ok := ids[strings.ToLower(m.Word())]; ok && m.TaskID == "" {
+				entries[i].Marks[j].TaskID = id
+			}
+		}
+		return flush()
+	}
+	return fmt.Errorf("没这条：%s", entryID)
 }
 
 func deleteEntry(id string) error {

@@ -32,14 +32,20 @@ var indexHTML []byte
 
 const defaultPort = "8085"
 
+const defaultWebHost = "192.168.1.91" // 他这台机器的固定内网 IP，邮件里的链接要点得开
+
 var (
 	dataDir   string
 	port      string
+	listenOn  string
+	webURL    string
 	envPath   string
 	transTo   string
 	tasksList string
 	reviewRaw string
+	pushTasks bool
 	doImport  bool
+	doPush    bool
 	doMail    bool
 	dryRun    bool
 )
@@ -64,12 +70,20 @@ func main() {
 	flag.StringVar(&port, "port", envOr("CONTEXT_VOCAB_PORT", defaultPort), "监听端口")
 	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY")
 	flag.StringVar(&transTo, "to", "zh-CN", "自动翻译成哪种语言")
-	flag.StringVar(&tasksList, "tasks-list", envOr("VOCAB_TASKS_LIST", defaultTasksList), "从哪个 Google Tasks 列表导词")
+	flag.StringVar(&listenOn, "listen", envOr("CONTEXT_VOCAB_LISTEN", "0.0.0.0"), "监听哪个地址（0.0.0.0 = 手机也能开）")
+	flag.StringVar(&webURL, "web-url", envOr("VOCAB_WEB_URL", ""), "邮件里那个链接（默认 http://"+defaultWebHost+":端口）")
+	flag.StringVar(&tasksList, "tasks-list", envOr("VOCAB_TASKS_LIST", defaultTasksList), "跟哪个 Google Tasks 列表同步")
 	flag.StringVar(&reviewRaw, "review-days", envOr("VOCAB_REVIEW_DAYS", defaultReviewDays), "复习间隔（天，逗号分隔）")
+	flag.BoolVar(&pushTasks, "push-tasks", true, "网页里存一条词就同步推到 Tasks")
 	flag.BoolVar(&doImport, "import", false, "从 Tasks 导一次词就退出，不起服务")
+	flag.BoolVar(&doPush, "push", false, "把整本词推到 Tasks 就退出，不起服务")
 	flag.BoolVar(&doMail, "mail", false, "导入 + 发一封单词日报就退出（给定时器用）")
 	flag.BoolVar(&dryRun, "dry-run", false, "配合 -mail：只把信打到终端，不真发")
 	flag.Parse()
+
+	if webURL == "" {
+		webURL = "http://" + defaultWebHost + ":" + port
+	}
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("❌ 建不了数据目录 %s：%v", dataDir, err)
@@ -82,7 +96,7 @@ func main() {
 	initTranslate(envPath)
 
 	// 一次性模式：给 systemd timer 用的，干完就退，不起服务
-	if doImport || doMail {
+	if doImport || doPush || doMail {
 		runOnce()
 		return
 	}
@@ -90,45 +104,75 @@ func main() {
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/entries", logged("/api/entries", handleEntries))
 	http.HandleFunc("/api/import-tasks", logged("/api/import-tasks", handleImportTasks))
+	http.HandleFunc("/api/export-tasks", logged("/api/export-tasks", handleExportTasks))
 	http.HandleFunc("/api/translate", logged("/api/translate", handleTranslate))
 	http.HandleFunc("/api/export.csv", logged("/api/export.csv", handleExportCSV))
 
-	fmt.Printf("📝 上下文单词本起来了：http://localhost:%s\n", port)
+	fmt.Printf("📝 上下文单词本起来了：%s\n", webURL)
 	fmt.Printf("   数据文件：%s（已有 %d 条句子）\n", entriesPath(), countEntries())
 	fmt.Printf("   粘句子 → 点词（单词）/ 点词下面的条（词组）→ 加入并翻译 → Enter 存\n")
 	fmt.Printf("   自动翻译 %s：%s\n", transTo, tick(translateKey != ""))
-	fmt.Printf("   手机上记的词：点页面右上角「从 Task 导入」，拉「%s」列表\n", tasksList)
+	fmt.Printf("   跟 Google Tasks「%s」双向同步：存一条就推过去 %s，右上角还有导入/导出按钮\n",
+		tasksList, onOff(pushTasks))
+	if listenOn == "0.0.0.0" {
+		fmt.Printf("   监听 0.0.0.0，同一个局域网的手机也能开（只想本机看就 -listen 127.0.0.1）\n")
+	}
 
-	if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
+	if err := http.ListenAndServe(listenOn+":"+port, nil); err != nil {
 		log.Fatalf("❌ 起不来（端口被占了？换 -port）：%v", err)
 	}
 }
 
-// runOnce 是 -import / -mail 干的活：先从 Tasks 拉词，要发信再发一封日报。
+func onOff(b bool) string {
+	if b {
+		return "（开）"
+	}
+	return "（关）"
+}
+
+// runOnce 是 -import / -push / -mail 干的活：先跟 Tasks 对一遍，要发信再发一封日报。
 // 导入失败不挡发信——词不全也比一天没信强，正文顶上会写清楚。
 func runOnce() {
+	var failed bool
+
+	if doPush {
+		res, err := pushAllEntries(tasksList)
+		if err != nil {
+			log.Printf("推到「%s」失败：%v", tasksList, err)
+			failed = true
+		}
+		fmt.Printf("推到「%s」：新建 %d，本来就有的 %d\n", tasksList, res.Pushed, res.Skipped)
+	}
+
 	var warn string
-	res, err := importTasks(tasksList)
-	if err != nil {
-		warn = fmt.Sprintf("从「%s」导词失败：%v", tasksList, err)
-		log.Print(warn)
-	} else {
-		fmt.Printf("从「%s」导词：%s\n", tasksList, res)
-		for _, s := range res.Skipped {
-			fmt.Printf("   跳过：%s\n", s)
+	if doImport || doMail {
+		res, err := importTasks(tasksList)
+		if err != nil {
+			warn = fmt.Sprintf("从「%s」导词失败：%v", tasksList, err)
+			log.Print(warn)
+			failed = true
+		} else {
+			fmt.Printf("从「%s」导词：%s\n", tasksList, res)
+			for _, s := range res.Skipped {
+				fmt.Printf("   跳过：%s\n", s)
+			}
 		}
 	}
 
 	if !doMail {
-		if err != nil {
+		if failed {
 			os.Exit(1)
 		}
 		return
 	}
 
-	subject, body := buildDigest(time.Now(), parseReviewDays(reviewRaw))
+	subject, body, send := buildDigest(time.Now(), parseReviewDays(reviewRaw))
 	if warn != "" {
-		body = warn + "\n（所以这封信里的词可能不全）\n\n" + body
+		body, send = warn+"\n（所以这封信里的词可能不全）\n\n"+body, true
+	}
+	if !send {
+		fmt.Println("昨天没记新词，这封不发。")
+		return
 	}
 	if dryRun {
 		fmt.Printf("\n主题：%s\n\n%s", subject, body)
@@ -146,16 +190,33 @@ func handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "要用 POST", http.StatusMethodNotAllowed)
 		return
 	}
-	list := strings.TrimSpace(r.URL.Query().Get("list"))
-	if list == "" {
-		list = tasksList
-	}
-	res, err := importTasks(list)
+	res, err := importTasks(listParam(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, res)
+}
+
+// handleExportTasks 网页上那个「导出到 Task」按钮：整本推一遍，已经在列表里的跳过
+func handleExportTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "要用 POST", http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := pushAllEntries(listParam(r))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
+}
+
+func listParam(r *http.Request) string {
+	if s := strings.TrimSpace(r.URL.Query().Get("list")); s != "" {
+		return s
+	}
+	return tasksList
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +244,11 @@ func handleEntries(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// 存一条就顺手推到 Tasks（手机上随时能翻）。后台推，不让他等在这儿；
+		// 推挂了也不影响存——词已经在本子里，回头点「导出到 Task」能补。
+		if pushTasks {
+			pushEntryAsync(saved, tasksList)
 		}
 		writeJSON(w, saved)
 

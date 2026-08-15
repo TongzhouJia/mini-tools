@@ -47,14 +47,6 @@ func parseReviewDays(s string) []int {
 	return out
 }
 
-func joinInts(ns []int, sep string) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
-		parts[i] = strconv.Itoa(n)
-	}
-	return strings.Join(parts, sep)
-}
-
 func parseTime(s string) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
 	if err != nil {
@@ -128,8 +120,6 @@ func collectCards() []card {
 	return out
 }
 
-var weekdayZh = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
-
 func mdate(t time.Time) string { return fmt.Sprintf("%d/%d", int(t.Month()), t.Day()) }
 
 // line 一个词占两行：词 + 释义，例句另起一行缩进。没例句（只写了词）就只占一行。
@@ -144,22 +134,13 @@ func line(i int, c card) string {
 	return head
 }
 
-func section(title string, cards []card) string {
-	var b strings.Builder
-	b.WriteString(title + "\n" + strings.Repeat("─", 32) + "\n")
-	for i, c := range cards {
-		b.WriteString(line(i+1, c) + "\n")
-	}
-	return b.String()
-}
-
 // buildDigest 拼出一封信。now 一般就是现在，测试时可以塞别的日子进去。
-func buildDigest(now time.Time, reviewDays []int) (subject, body string) {
+// send=false 表示昨天一个新词都没记——那天不发信（他明说的，别拿空信烦他）。
+func buildDigest(now time.Time, reviewDays []int) (subject, body string, send bool) {
 	cards := collectCards()
 
-	var fresh []card                // 昨天新收的
-	due := map[int][]card{}         // 间隔天数 -> 该复习的词
-	weekNew := 0                    // 最近 7 天新增，放在结尾当个进度条
+	var fresh []card        // 昨天新收的
+	due := map[int][]card{} // 间隔天数 -> 今天该复习的词
 	inReview := map[int]bool{}
 	for _, d := range reviewDays {
 		inReview[d] = true
@@ -173,50 +154,39 @@ func buildDigest(now time.Time, reviewDays []int) (subject, body string) {
 		case inReview[d]:
 			due[d] = append(due[d], c)
 		}
-		if d >= 0 && d < 7 {
-			weekNew++
-		}
+	}
+	if len(fresh) == 0 {
+		return "", "", false
 	}
 
 	dueCount := 0
 	for _, cs := range due {
 		dueCount += len(cs)
 	}
-
-	subject = fmt.Sprintf("单词 %s%s · 昨天 %d 个 · 复习 %d 个",
-		mdate(now), weekdayZh[int(now.Weekday())], len(fresh), dueCount)
+	subject = fmt.Sprintf("单词 %s · 新收 %d · 复习 %d", mdate(now), len(fresh), dueCount)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n\n", now.Format("2006-01-02"), weekdayZh[int(now.Weekday())])
-
-	if len(fresh) > 0 {
-		yest := now.AddDate(0, 0, -1)
-		b.WriteString(section(fmt.Sprintf("昨天（%s）新收了 %d 个词", mdate(yest), len(fresh)), fresh))
-	} else {
-		b.WriteString("昨天一个新词都没加。\n")
+	fmt.Fprintf(&b, "昨天（%s）新收 %d 个\n", mdate(now.AddDate(0, 0, -1)), len(fresh))
+	for i, c := range fresh {
+		b.WriteString(line(i+1, c) + "\n")
 	}
-	b.WriteString("\n")
 
 	if dueCount > 0 {
-		fmt.Fprintf(&b, "今天该复习 %d 个词\n%s\n", dueCount, strings.Repeat("─", 32))
+		fmt.Fprintf(&b, "\n今天该复习 %d 个\n", dueCount)
 		for _, d := range reviewDays {
 			cs := due[d]
 			if len(cs) == 0 {
 				continue
 			}
-			fmt.Fprintf(&b, "\n【%d 天前 · %s 收的】\n", d, mdate(now.AddDate(0, 0, -d)))
+			fmt.Fprintf(&b, "\n【%d 天前 · %s】\n", d, mdate(now.AddDate(0, 0, -d)))
 			for i, c := range cs {
 				b.WriteString(line(i+1, c) + "\n")
 			}
 		}
-	} else {
-		b.WriteString("今天没有到期要复习的词。\n")
 	}
 
-	fmt.Fprintf(&b, "\n%s\n单词本一共 %d 个词，最近 7 天新增 %d 个。\n复习间隔：第 1 天（昨天那栏）+ 第 %s 天\n全部：http://localhost:%s\n",
-		strings.Repeat("─", 32), len(cards), weekNew, joinInts(reviewDays, "/"), port)
-
-	return subject, b.String()
+	fmt.Fprintf(&b, "\n%s\n", webURL)
+	return subject, b.String(), true
 }
 
 // sendMail 外调 gmail-send（默认就发给他自己）。正文走 stdin，长了也不会撑爆命令行。

@@ -114,7 +114,8 @@
   <span class="hint" id="stat"></span>
   <span class="sp"></span>
   <input id="q" placeholder="搜句子 / 词 / 释义" style="width: 220px;">
-  <button class="ghost" id="btnImport" title="把手机 Google Tasks「单词积累」列表里的词拉进来">从 Task 导入</button>
+  <button class="ghost" id="btnImport" title="把 Google Tasks「单词积累」列表里的词拉进来">从 Task 导入</button>
+  <button class="ghost" id="btnExport" title="把本子里还没同步的词推到 Google Tasks（存词时本来就会自动推，这个是补漏的）">导出到 Task</button>
   <a href="/api/export.csv" download>导出 CSV</a>
   <a href="/api/export.csv?full=1" download>带例句</a>
 </header>
@@ -513,27 +514,36 @@ $("#list").addEventListener("click", async ev => {
 let qt;
 $("#q").addEventListener("input", () => { clearTimeout(qt); qt = setTimeout(load, 180); });
 
-// 手机上往 Google Tasks 的「单词积累」里记的词，一键拉进来。
-// 反复点没关系，同一条任务只会更新不会重复。
-$("#btnImport").addEventListener("click", async () => {
-  const b = $("#btnImport");
-  b.disabled = true; b.textContent = "导入中…";
+// 跟 Google Tasks 的「单词积累」两个方向都能对：
+// 导入 = 手机上随手记的词拉进来；导出 = 本子里的词推过去（存词时会自动推，这个补漏）。
+// 两边都按词查重，反复点不会推出一堆重复。
+async function syncTasks(btn, label, url, describe) {
+  const b = $(btn), old = b.textContent;
+  b.disabled = true; b.textContent = label;
   try {
-    const r = await fetch("/api/import-tasks", { method: "POST" });
+    const r = await fetch(url, { method: "POST" });
     const txt = await r.text();
     if (!r.ok) throw new Error(txt.trim());
-    const d = JSON.parse(txt);
+    toast(describe(JSON.parse(txt)));
+    load();
+  } catch (e) {
+    toast(old + "失败：" + e.message);
+  } finally {
+    b.disabled = false; b.textContent = old;
+  }
+}
+
+$("#btnImport").addEventListener("click", () =>
+  syncTasks("#btnImport", "导入中…", "/api/import-tasks", d => {
     let msg = d.added ? `导入 ${d.added} 个新词` : "没有新词";
     if (d.updated) msg += `，更新 ${d.updated} 个`;
     if (d.skipped && d.skipped.length) msg += `，跳过 ${d.skipped.length} 个（${d.skipped[0]}）`;
-    toast(msg);
-    load();
-  } catch (e) {
-    toast("导入失败：" + e.message);
-  } finally {
-    b.disabled = false; b.textContent = "从 Task 导入";
-  }
-});
+    return msg;
+  }));
+
+$("#btnExport").addEventListener("click", () =>
+  syncTasks("#btnExport", "导出中…", "/api/export-tasks", d =>
+    d.pushed ? `推了 ${d.pushed} 个词到 Task` : `没什么可推的（${d.skipped} 个都已经在了）`));
 
 renderAll();
 load();
