@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日语点读笔</title>
+<style>
+:root{
+  --bg:#f6f5f2; --panel:#fff; --ink:#1c1b19; --dim:#77736c; --line:#e2ded6;
+  --seg:#e8eefb; --seg-b:#b9cdf2; --seg-hover:#d7e3fa;
+  --play:#ffe9c2; --play-b:#f0a323; --warm:#c2410c; --ok:#15803d;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17181a; --panel:#1f2124; --ink:#e8e6e3; --dim:#8f8b85; --line:#31343a;
+    --seg:#242c3d; --seg-b:#3d5480; --seg-hover:#2d3950;
+    --play:#4a3410; --play-b:#f0a323; --warm:#fb923c; --ok:#4ade80;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:15px/1.6 "Noto Sans CJK SC","Noto Sans SC",system-ui,sans-serif;
+  display:flex; overflow:hidden;
+}
+button,select,input,textarea{font:inherit;color:inherit}
+button{
+  background:var(--panel); border:1px solid var(--line); border-radius:7px;
+  padding:5px 11px; cursor:pointer;
+}
+button:hover{border-color:var(--dim)}
+button.primary{background:var(--seg);border-color:var(--seg-b)}
+button:disabled{opacity:.45;cursor:default}
+select,input[type=text]{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+
+/* ── 侧栏 ── */
+#side{
+  width:230px; flex:none; background:var(--panel); border-right:1px solid var(--line);
+  display:flex; flex-direction:column;
+}
+#side h1{font-size:14px;margin:0;letter-spacing:.5px}
+.side-head{padding:12px 12px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.side-head h1{flex:1}
+#doclist{list-style:none;margin:0;padding:6px;overflow-y:auto;flex:1}
+#doclist li{padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:2px}
+#doclist li:hover{background:var(--seg)}
+#doclist li.on{background:var(--seg);border-left:3px solid var(--seg-b);padding-left:7px}
+#doclist .t{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#doclist .m{display:block;font-size:11px;color:var(--dim);margin-top:2px}
+.side-foot{padding:8px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--dim)}
+
+/* ── 主区 ── */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#bar{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);
+}
+#title{flex:1;min-width:140px;border:1px solid transparent;background:transparent;font-size:16px;font-weight:600}
+#title:hover,#title:focus{border-color:var(--line);background:var(--bg)}
+.sp{flex:1}
+
+#stage{flex:1;overflow-y:auto;padding:26px 0 40px}
+#text{
+  max-width:760px;margin:0 auto;padding:0 28px;
+  white-space:pre-wrap; word-break:break-word;
+  font-family:"Noto Sans CJK JP","Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif;
+  font-size:21px; line-height:2.15;
+}
+#text .seg{
+  background:var(--seg); border-bottom:2px solid var(--seg-b);
+  border-radius:5px; padding:2px 1px; cursor:pointer;
+}
+#text .seg:hover{background:var(--seg-hover)}
+#text .seg.cached{border-bottom-style:solid}
+#text .seg:not(.cached){border-bottom-style:dotted}
+#text .seg.playing{background:var(--play);border-bottom-color:var(--play-b)}
+
+#empty{max-width:620px;margin:8vh auto;padding:0 28px;color:var(--dim)}
+#empty h2{color:var(--ink);font-size:19px}
+#empty kbd{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px}
+#empty li{margin:5px 0}
+
+/* ── 编辑原文 ── */
+#editor{max-width:760px;margin:0 auto;padding:20px 28px;width:100%}
+#ed-text{
+  width:100%;height:56vh;padding:14px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);resize:vertical;
+  font-family:"Noto Sans CJK JP","Noto Sans JP",sans-serif;font-size:18px;line-height:1.9;
+}
+#ed-title{width:100%;margin-bottom:10px;padding:9px 12px}
+.ed-btns{margin-top:12px;display:flex;gap:8px;align-items:center}
+
+/* ── 浮标 ── */
+#pop{
+  position:absolute;z-index:20;display:none;
+  background:var(--panel);border:1px solid var(--seg-b);border-radius:9px;
+  box-shadow:0 6px 20px rgba(0,0,0,.18);padding:5px;gap:4px;
+}
+#pop button{border:none;background:transparent;padding:5px 9px}
+#pop button:hover{background:var(--seg)}
+
+/* ── 底栏 ── */
+#foot{
+  border-top:1px solid var(--line);background:var(--panel);
+  padding:8px 16px;display:flex;gap:14px;align-items:center;min-height:44px;font-size:13px;
+}
+#foot .now{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#foot .jp{font-family:"Noto Sans CJK JP","Noto Sans JP",sans-serif}
+#foot .cn{color:var(--dim)}
+#foot .cnt{color:var(--dim);flex:none}
+#toast{
+  position:fixed;left:50%;bottom:64px;transform:translateX(-50%);
+  background:var(--warm);color:#fff;padding:9px 16px;border-radius:9px;
+  max-width:70vw;display:none;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.25);
+}
+.hint{color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+
+<aside id="side">
+  <div class="side-head">
+    <h1>日语点读笔</h1>
+    <button id="btn-new">新建</button>
+  </div>
+  <ul id="doclist"></ul>
+  <div class="side-foot" id="sidefoot"></div>
+</aside>
+
+<main id="main">
+  <div id="bar" hidden>
+    <input type="text" id="title" placeholder="标题">
+    <select id="voice" title="嗓子"></select>
+    <select id="rate" title="语速"></select>
+    <select id="size" title="字号"></select>
+    <button id="btn-prewarm" title="把所有段一次性合成好，之后点读就是纯本地播放">全部合成</button>
+    <button id="btn-split" title="按句号问号和换行自动切一遍">自动分段</button>
+    <button id="btn-edit">改原文</button>
+    <button id="btn-del" title="删掉这篇文章">删除</button>
+  </div>
+
+  <div id="stage">
+    <div id="empty">
+      <h2>把日语粘进来，自己划成一段一段，点哪段念哪段</h2>
+      <ul>
+        <li>左上角 <b>新建</b>，把日语粘进去保存</li>
+        <li>在正文里 <b>拖选一段</b>，松手弹出小按钮，或直接按 <kbd>回车</kbd> —— 这段就划好了，语音同时合成</li>
+        <li>之后 <b>点一下这段</b> 就念。音频存在本地，第二次点是瞬时的，也不再花配额</li>
+        <li><kbd>空格</kbd> 重播当前段 · <kbd>↑</kbd><kbd>↓</kbd> 上一段下一段 · <kbd>r</kbd> 连读 · <kbd>t</kbd> 翻译 · <kbd>Delete</kbd> 取消这段划分</li>
+        <li>文章都留在本地，换一篇不会把上一篇冲掉</li>
+      </ul>
+    </div>
+
+    <div id="editor" hidden>
+      <input type="text" id="ed-title" placeholder="标题（留空自动取开头）">
+      <textarea id="ed-text" placeholder="把日语粘到这里……" spellcheck="false"></textarea>
+      <div class="ed-btns">
+        <button class="primary" id="ed-save">保存</button>
+        <button id="ed-cancel">取消</button>
+        <span class="hint" id="ed-hint"></span>
+      </div>
+    </div>
+
+    <div id="text" hidden></div>
+  </div>
+
+  <div id="foot" hidden>
+    <span class="cnt" id="cnt"></span>
+    <span class="now" id="now"></span>
+  </div>
+</main>
+
+<div id="pop">
+  <button data-act="add">划成一段</button>
+  <button data-act="say">试听</button>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+// ── 状态 ─────────────────────────────────────────────────────────────
+let docs = [];        // 侧栏列表
+let cur = null;       // 当前文章 {id,title,text,segments,voice,rate}
+let curSeg = -1;      // 当前段（播放/键盘操作的落点）
+let cachedSet = new Set();   // 哪些段已经有音频了（按段序号）
+let chain = false;    // 连读中
+let fontSize = +(localStorage.getItem('jp.size') || 21);
+
+const audio = new Audio();
+const blobs = new Map();     // text|voice|rate -> objectURL，同一段点第二次连 HTTP 都省了
+
+const voiceOf = () => (cur && cur.voice) || $('#voice').value || '';
+const rateOf  = () => (cur && cur.rate)  || +$('#rate').value || 1;
+
+function toast(msg, ms = 3600){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.style.display = 'none', ms);
+}
+
+// ── 后端 ─────────────────────────────────────────────────────────────
+async function api(url, opt){
+  const r = await fetch(url, opt);
+  if(!r.ok) throw new Error((await r.text()).trim() || ('HTTP ' + r.status));
+  return r;
+}
+
+async function loadList(){
+  docs = await (await api('/api/docs')).json();
+  const ul = $('#doclist');
+  ul.innerHTML = docs.map(d => `
+    <li data-id="${d.id}" class="${cur && cur.id === d.id ? 'on' : ''}">
+      <span class="t">${esc(d.title || '未命名')}</span>
+      <span class="m">${d.segs} 段 · ${d.chars} 字</span>
+    </li>`).join('') || '<li class="m" style="color:var(--dim);cursor:default">还没有文章</li>';
+  $('#sidefoot').textContent = docs.length ? `${docs.length} 篇` : '';
+}
+
+let saveTimer = null;
+function save(immediate){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doSave, immediate ? 0 : 600);
+}
+async function doSave(){
+  if(!cur) return;
+  try{
+    const r = await api('/api/doc', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cur)
+    });
+    const saved = await r.json();
+    // 只回填服务端定的字段，别整个替换 —— 这期间用户可能又改了
+    cur.id = saved.id;
+    if(!cur.title){ cur.title = saved.title; $('#title').value = saved.title; }
+    loadList();
+  }catch(e){ toast('存不进去：' + e.message); }
+}
+
+async function openDoc(id){
+  try{ cur = await (await api('/api/doc?id=' + encodeURIComponent(id))).json(); }
+  catch(e){ return toast(e.message); }
+  cur.segments = cur.segments || [];
+  cur.segments.sort((a, b) => a.start - b.start);   // pieces() 靠有序才切得对
+  cur.voice = cur.voice || $('#voice').value;
+  cur.rate  = cur.rate  || 1;
+  curSeg = -1; chain = false;
+  clearBlobs();
+  showReader();
+  render();
+  refreshCached();
+  loadList();
+}
+
+function clearBlobs(){
+  for(const u of blobs.values()) URL.revokeObjectURL(u);
+  blobs.clear();
+}
+
+// ── 界面切换 ─────────────────────────────────────────────────────────
+function showReader(){
+  $('#empty').hidden = true; $('#editor').hidden = true;
+  $('#text').hidden = false; $('#bar').hidden = false; $('#foot').hidden = false;
+  $('#title').value = cur.title || '';
+  $('#voice').value = cur.voice || '';
+  $('#rate').value = String(cur.rate || 1);
+}
+function showEmpty(){
+  cur = null; curSeg = -1;
+  $('#empty').hidden = false; $('#editor').hidden = true;
+  $('#text').hidden = true; $('#bar').hidden = true; $('#foot').hidden = true;
+  loadList();
+}
+function showEditor(existing){
+  $('#empty').hidden = true; $('#text').hidden = true; $('#foot').hidden = true;
+  $('#editor').hidden = false; $('#bar').hidden = !existing;
+  $('#ed-title').value = existing ? (cur.title || '') : '';
+  $('#ed-text').value  = existing ? cur.text : '';
+  $('#ed-hint').textContent = existing
+    ? '改完会按原文重新对位，对不上的段会被丢掉' : '';
+  $('#ed-text').focus();
+}
+
+// ── 正文渲染 ─────────────────────────────────────────────────────────
+// 把原文按 segments 切成交替的片段。每个片段一个 span，span 里恰好一个文本节点
+// —— 选区换算就靠这个前提（data-off + range.offset 直接相加）。
+function pieces(){
+  const out = []; let pos = 0;
+  for(let i = 0; i < cur.segments.length; i++){
+    const s = cur.segments[i];
+    if(s.start > pos) out.push({start: pos, end: s.start, seg: null});
+    out.push({start: s.start, end: s.end, seg: i});
+    pos = s.end;
+  }
+  if(pos < cur.text.length) out.push({start: pos, end: cur.text.length, seg: null});
+  return out.filter(p => p.end > p.start);
+}
+
+function render(){
+  const el = $('#text');
+  el.style.fontSize = fontSize + 'px';
+  el.innerHTML = pieces().map(p => {
+    const t = esc(cur.text.slice(p.start, p.end));
+    if(p.seg === null) return `<span class="raw" data-off="${p.start}">${t}</span>`;
+    const cls = 'seg' + (cachedSet.has(p.seg) ? ' cached' : '') + (p.seg === curSeg ? ' playing' : '');
+    return `<span class="${cls}" data-off="${p.start}" data-seg="${p.seg}">${t}</span>`;
+  }).join('');
+  updateFoot();
+}
+
+// 只换高亮，不重建 DOM（重建会打断选区、也会闪）
+function highlight(){
+  for(const el of $('#text').querySelectorAll('.seg')) el.classList.remove('playing');
+  const el = $('#text').querySelector(`.seg[data-seg="${curSeg}"]`);
+  if(el){
+    el.classList.add('playing');
+    const r = el.getBoundingClientRect(), st = $('#stage').getBoundingClientRect();
+    if(r.top < st.top + 40 || r.bottom > st.bottom - 40)
+      el.scrollIntoView({block:'center', behavior:'smooth'});
+  }
+  updateFoot();
+}
+
+function updateFoot(){
+  if(!cur) return;
+  const n = cur.segments.length;
+  $('#cnt').textContent = n ? (curSeg >= 0 ? `${curSeg + 1} / ${n} 段` : `${n} 段`) : '还没划分';
+  const s = curSeg >= 0 ? cur.segments[curSeg] : null;
+  $('#now').innerHTML = s
+    ? `<span class="jp">${esc(s.text)}</span>` + (s.note ? ` <span class="cn">— ${esc(s.note)}</span>` : '')
+    : '<span class="hint">拖选一段按回车划成一段；点已划分的段就念</span>';
+}
+
+// 哪些段已经有音频缓存了，给它们画实线下划线
+async function refreshCached(){
+  if(!cur || !cur.segments.length){ cachedSet = new Set(); return; }
+  try{
+    const r = await api(`/api/cached?id=${encodeURIComponent(cur.id)}&voice=${encodeURIComponent(voiceOf())}&rate=${rateOf()}`);
+    cachedSet = new Set(await r.json());
+    for(const el of $('#text').querySelectorAll('.seg'))
+      el.classList.toggle('cached', cachedSet.has(+el.dataset.seg));
+  }catch(e){ /* 只是个标记，查不到就算了 */ }
+}
+
+// ── 选区 → 原文下标 ──────────────────────────────────────────────────
+// 下标一律是 JS 的 UTF-16 下标，跟 cur.text 的 slice 对得上。
+// 服务端只存不碰这两个数（它那边的下标是字节，混用必出乱码）。
+function offsetOf(node, off){
+  const box = $('#text');
+  if(node === box){                    // 端点落在容器上（Ctrl+A 全选就是这样）
+    let acc = 0;
+    for(let i = 0; i < off && i < box.childNodes.length; i++) acc += box.childNodes[i].textContent.length;
+    return acc;
+  }
+  let el = node.nodeType === 3 ? node.parentElement : node;
+  while(el && el.dataset?.off === undefined) el = el.parentElement;
+  if(!el) return null;
+  if(node.nodeType !== 3) return +el.dataset.off;   // 落在 span 元素上，退到它的起点
+  // 一个 span 里通常只有一个文本节点，但正文很长时浏览器会把它切成好几个，
+  // 所以老实累加本节点之前那些的长度，别假设 off 就是 span 内偏移
+  let acc = 0;
+  for(const n of el.childNodes){ if(n === node) break; acc += n.textContent.length; }
+  return +el.dataset.off + acc + off;
+}
+
+function currentRange(){
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if(!$('#text').contains(r.commonAncestorContainer)) return null;
+  let a = offsetOf(r.startContainer, r.startOffset);
+  let b = offsetOf(r.endContainer, r.endOffset);
+  if(a === null || b === null) return null;
+  if(a > b) [a, b] = [b, a];
+  // 两端的空白裁掉 —— 拖选时多带一个换行很常见
+  while(a < b && /\s/.test(cur.text[a])) a++;
+  while(b > a && /\s/.test(cur.text[b-1])) b--;
+  return b > a ? [a, b] : null;
+}
+
+function overlaps(a, b){
+  return cur.segments.some(s => a < s.end && b > s.start);
+}
+
+function addSegment(){
+  const rg = currentRange();
+  if(!rg) return toast('先拖选一段日语');
+  const [a, b] = rg;
+  if(overlaps(a, b)) return toast('这块跟已经划好的段重叠了，先把那段取消（点它然后按 Delete）');
+  cur.segments.push({start: a, end: b, text: cur.text.slice(a, b)});
+  cur.segments.sort((x, y) => x.start - y.start);
+  curSeg = cur.segments.findIndex(s => s.start === a);
+  window.getSelection().removeAllRanges();
+  hidePop();
+  render();
+  save();
+  play(curSeg);          // 划完立刻合成 + 念一遍，省得再点一下确认
+}
+
+function delSegment(i){
+  if(i < 0 || i >= cur.segments.length) return;
+  cur.segments.splice(i, 1);
+  curSeg = -1; chain = false; audio.pause();
+  cachedSet = new Set();
+  render(); save(); refreshCached();
+}
+
+// ── 播放 ─────────────────────────────────────────────────────────────
+async function audioURL(seg){
+  const key = `${seg.text}|${voiceOf()}|${rateOf()}`;
+  if(blobs.has(key)) return blobs.get(key);
+  // 用 fetch + blob，不直接 new Audio(url)：<audio> 会把服务端的错误响应
+  // 吞成一句「no supported source found」，先 fetch 才能把真正的报错读出来
+  const r = await api(`/api/tts?text=${encodeURIComponent(seg.text)}&voice=${encodeURIComponent(voiceOf())}&rate=${rateOf()}`);
+  const u = URL.createObjectURL(await r.blob());
+  blobs.set(key, u);
+  cachedSet.add(cur.segments.indexOf(seg));
+  return u;
+}
+
+async function play(i){
+  if(!cur || i < 0 || i >= cur.segments.length) return;
+  curSeg = i;
+  highlight();
+  const seg = cur.segments[i];
+  try{
+    const url = await audioURL(seg);
+    audio.src = url;
+    audio.currentTime = 0;
+    await audio.play();
+    const el = $('#text').querySelector(`.seg[data-seg="${i}"]`);
+    if(el) el.classList.add('cached');
+  }catch(e){
+    chain = false;
+    toast('念不了：' + e.message);
+  }
+}
+
+audio.addEventListener('ended', () => {
+  if(!chain) return;
+  if(curSeg + 1 < cur.segments.length) setTimeout(() => play(curSeg + 1), 260);
+  else { chain = false; toast('读完了', 1600); }
+});
+
+function step(d){
+  if(!cur || !cur.segments.length) return;
+  let i = curSeg < 0 ? (d > 0 ? 0 : cur.segments.length - 1) : curSeg + d;
+  i = Math.max(0, Math.min(cur.segments.length - 1, i));
+  play(i);
+}
+
+async function sayText(text){
+  try{
+    const r = await api(`/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceOf())}&rate=${rateOf()}`);
+    audio.src = URL.createObjectURL(await r.blob());
+    audio.play();
+  }catch(e){ toast('念不了：' + e.message); }
+}
+
+async function translateCur(){
+  if(curSeg < 0) return toast('先点一段');
+  const seg = cur.segments[curSeg];
+  if(seg.note){ seg.note = ''; updateFoot(); save(); return; }  // 再按一次收起
+  try{
+    const r = await api('/api/translate?text=' + encodeURIComponent(seg.text));
+    seg.note = (await r.json()).text;
+    updateFoot(); save();
+  }catch(e){ toast('翻译失败：' + e.message); }
+}
+
+// ── 浮标 ─────────────────────────────────────────────────────────────
+function hidePop(){ $('#pop').style.display = 'none'; }
+function showPop(){
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || !sel.rangeCount) return hidePop();
+  if(!$('#text').contains(sel.getRangeAt(0).commonAncestorContainer)) return hidePop();
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  const p = $('#pop');
+  p.style.display = 'flex';
+  p.style.left = Math.max(8, r.left + r.width / 2 - p.offsetWidth / 2 + scrollX) + 'px';
+  p.style.top  = Math.max(8, r.top - p.offsetHeight - 8 + scrollY) + 'px';
+}
+
+// ── 自动分段 ─────────────────────────────────────────────────────────
+// 按句末标点和换行切一遍。用户主要还是自己拖，这个只是给个起点
+function autoSplit(text){
+  const segs = [];
+  const isEnd = c => '。．！？!?…'.includes(c);
+  const isCloser = c => '」』）)】”"\''.includes(c);
+  let start = null;
+  for(let i = 0; i < text.length; i++){
+    const c = text[i];
+    if(/\s/.test(c)){                       // 换行/空格也断段
+      if(start !== null){ segs.push([start, i]); start = null; }
+      continue;
+    }
+    if(start === null) start = i;
+    if(isEnd(c)){
+      let j = i + 1;
+      while(j < text.length && (isEnd(text[j]) || isCloser(text[j]))) j++;
+      segs.push([start, j]); start = null; i = j - 1;
+    }
+  }
+  if(start !== null) segs.push([start, text.length]);
+  return segs.map(([a, b]) => ({start: a, end: b, text: text.slice(a, b)}));
+}
+
+// ── 改原文后重新对位 ─────────────────────────────────────────────────
+// 按段落文本在新原文里顺序 indexOf。找得到就更新下标，找不到就丢掉
+function relocate(segs, newText){
+  const kept = []; let from = 0, lost = 0;
+  for(const s of segs){
+    const i = newText.indexOf(s.text, from);
+    if(i < 0){ lost++; continue; }
+    kept.push({...s, start: i, end: i + s.text.length});
+    from = i + s.text.length;
+  }
+  return {kept, lost};
+}
+
+// ── 批量合成（SSE）───────────────────────────────────────────────────
+function prewarm(){
+  if(!cur || !cur.segments.length) return toast('还没划分任何段');
+  const btn = $('#btn-prewarm');
+  btn.disabled = true;
+  const es = new EventSource(`/api/prewarm?id=${encodeURIComponent(cur.id)}&voice=${encodeURIComponent(voiceOf())}&rate=${rateOf()}`);
+  es.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    btn.textContent = `合成中 ${d.i}/${d.n}`;
+    $('#now').innerHTML = `<span class="hint">[${d.i}/${d.n}] ${d.state} ${esc(d.text)}${d.err ? ' — ' + esc(d.err) : ''}</span>`;
+  });
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    es.close(); btn.disabled = false; btn.textContent = '全部合成';
+    toast(`合成完毕：新合成 ${d.done}，已有 ${d.skipped}，失败 ${d.failed}`);
+    refreshCached();
+  });
+  es.onerror = () => { es.close(); btn.disabled = false; btn.textContent = '全部合成'; toast('合成中断了（看终端日志）'); };
+}
+
+// ── 事件 ─────────────────────────────────────────────────────────────
+$('#doclist').addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]');
+  if(li) openDoc(li.dataset.id);
+});
+
+$('#btn-new').addEventListener('click', () => { cur = null; showEditor(false); });
+$('#btn-edit').addEventListener('click', () => showEditor(true));
+
+$('#ed-cancel').addEventListener('click', () => cur ? (showReader(), render()) : showEmpty());
+
+$('#ed-save').addEventListener('click', async () => {
+  const text = $('#ed-text').value;
+  if(!text.trim()) return toast('正文是空的');
+  const title = $('#ed-title').value.trim();
+  if(cur){
+    const {kept, lost} = relocate(cur.segments, text);
+    cur.text = text; cur.segments = kept; cur.title = title || cur.title;
+    curSeg = -1; cachedSet = new Set();
+    showReader(); render(); await doSave(); refreshCached();
+    if(lost) toast(`原文改了，有 ${lost} 段对不上位置，已丢掉`);
+  }else{
+    cur = {id:'', title, text, segments:[], voice: $('#voice').value, rate: +$('#rate').value};
+    await doSave();
+    curSeg = -1; cachedSet = new Set(); clearBlobs();
+    showReader(); render();
+  }
+});
+
+$('#btn-del').addEventListener('click', async () => {
+  if(!cur || !confirm(`删掉「${cur.title}」？音频缓存会留着。`)) return;
+  try{ await api('/api/doc?id=' + encodeURIComponent(cur.id), {method:'DELETE'}); }
+  catch(e){ return toast(e.message); }
+  showEmpty();
+});
+
+$('#btn-split').addEventListener('click', () => {
+  if(!cur) return;
+  if(cur.segments.length && !confirm(`会清掉现有的 ${cur.segments.length} 段划分，继续？`)) return;
+  cur.segments = autoSplit(cur.text);
+  curSeg = -1; cachedSet = new Set();
+  render(); save(true); refreshCached();
+  toast(`切成了 ${cur.segments.length} 段，不满意就点段按 Delete 取消，再自己拖`);
+});
+
+$('#btn-prewarm').addEventListener('click', prewarm);
+
+$('#title').addEventListener('input', () => { if(cur){ cur.title = $('#title').value; save(); } });
+
+$('#voice').addEventListener('change', () => {
+  if(!cur) return;
+  cur.voice = $('#voice').value; save(true); refreshCached();
+});
+$('#rate').addEventListener('change', () => {
+  if(!cur) return;
+  cur.rate = +$('#rate').value; save(true); refreshCached();
+});
+$('#size').addEventListener('change', () => {
+  fontSize = +$('#size').value;
+  localStorage.setItem('jp.size', fontSize);
+  $('#text').style.fontSize = fontSize + 'px';
+});
+
+// 点段播放；拖选状态下的点击不算（不然选完手一松就念了）
+$('#text').addEventListener('click', e => {
+  const sel = window.getSelection();
+  if(sel && !sel.isCollapsed) return;
+  const el = e.target.closest('.seg');
+  if(el){ chain = false; play(+el.dataset.seg); }
+});
+
+document.addEventListener('mouseup', () => setTimeout(showPop, 0));
+document.addEventListener('selectionchange', () => {
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed) hidePop();
+});
+
+$('#pop').addEventListener('mousedown', e => e.preventDefault());  // 别把选区弄没了
+$('#pop').addEventListener('click', e => {
+  const act = e.target.dataset.act;
+  if(act === 'add') addSegment();
+  if(act === 'say'){
+    const rg = currentRange();
+    if(rg) sayText(cur.text.slice(rg[0], rg[1]));
+    hidePop();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  const t = e.target.tagName;
+  if(t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT'){
+    if(e.key === 'Escape') e.target.blur();
+    return;
+  }
+  if(!cur) return;
+  const sel = window.getSelection();
+  const hasSel = sel && !sel.isCollapsed;
+
+  if(e.key === 'Enter' && hasSel){ e.preventDefault(); addSegment(); return; }
+  switch(e.key){
+    case ' ':
+      e.preventDefault(); chain = false;
+      if(curSeg >= 0) play(curSeg); else step(1);
+      break;
+    case 'ArrowDown': case 'j': e.preventDefault(); chain = false; step(1); break;
+    case 'ArrowUp':   case 'k': e.preventDefault(); chain = false; step(-1); break;
+    case 'r': case 'R':
+      chain = !chain;
+      if(chain){ toast('连读中，再按 r 停', 1800); play(curSeg < 0 ? 0 : curSeg); }
+      else { audio.pause(); toast('停', 1000); }
+      break;
+    case 't': case 'T': translateCur(); break;
+    case 'Delete': case 'Backspace':
+      if(curSeg >= 0){ e.preventDefault(); delSegment(curSeg); }
+      break;
+    case 'Escape': chain = false; audio.pause(); hidePop(); break;
+  }
+});
+
+// ── 启动 ─────────────────────────────────────────────────────────────
+async function initVoices(){
+  const sel = $('#voice');
+  try{
+    const vs = await (await api('/api/voices')).json();
+    const rank = f => ({'Chirp3-HD':0, 'Neural2':1, 'Wavenet':2, 'Standard':3}[f] ?? 9);
+    vs.sort((a, b) => rank(a.family) - rank(b.family) || a.name.localeCompare(b.name));
+    const g = {};
+    for(const v of vs) (g[v.family] ||= []).push(v);
+    sel.innerHTML = Object.entries(g).map(([fam, list]) =>
+      `<optgroup label="${fam}">` + list.map(v =>
+        `<option value="${v.name}">${v.name.replace('ja-JP-', '')} · ${v.gender === 'FEMALE' ? '女' : '男'}</option>`
+      ).join('') + '</optgroup>').join('');
+    sel.value = 'ja-JP-Chirp3-HD-Achernar';
+    if(!sel.value) sel.selectedIndex = 0;
+  }catch(e){
+    sel.innerHTML = '<option value="">（嗓子列表拿不到）</option>';
+    toast('拿不到嗓子列表：' + e.message);
+  }
+}
+
+function initSelects(){
+  $('#rate').innerHTML = [0.6, 0.75, 0.85, 1, 1.15, 1.3, 1.5]
+    .map(r => `<option value="${r}">语速 ${r}x</option>`).join('');
+  $('#rate').value = '1';
+  $('#size').innerHTML = [17, 19, 21, 24, 28, 32]
+    .map(s => `<option value="${s}">${s}px</option>`).join('');
+  $('#size').value = String(fontSize);
+}
+
+(async function main(){
+  initSelects();
+  await initVoices();
+  await loadList();
+  if(docs.length) openDoc(docs[0].id); else showEmpty();
+})();
+</script>
+</body>
+</html>
