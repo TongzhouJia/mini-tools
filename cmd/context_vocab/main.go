@@ -65,7 +65,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-const usage = `📚 context_vocab —— 在句子里记单词，跟 Google Tasks 双向同步，每天发单词日报
+const usage = `context_vocab —— 在句子里记单词，跟 Google Tasks 双向同步，每天发单词日报
 
 用法：
   context_vocab              起服务（默认 :8083，0.0.0.0 所以手机也能开）
@@ -78,7 +78,7 @@ const usage = `📚 context_vocab —— 在句子里记单词，跟 Google Task
 
 数据：
   默认 data/context_vocab（相对当前目录！用 -data 或 CONTEXT_VOCAB_DATA_DIR 改）
-  ⚠️  主键是 Google Tasks 的 task id，created_at 不许重置，重置了复习节奏就乱
+  主键是 Google Tasks 的 task id，created_at 不许重置，重置了复习节奏就乱
 依赖：
   GOOGLE_TRANSLATE_API_KEY 从 .env 读；Key 缺了不致命，句子和词照样存，中文列留空自己填
   同步默认走 Tasks 的 "To do" 列表，用 -tasks-list 改

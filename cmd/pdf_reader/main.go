@@ -71,7 +71,7 @@ func home() string {
 	return h
 }
 
-const usage = `📖 pdf_reader —— 把本地 PDF 变成正常网页，能划词存单词 / 高亮 / 朗读 / 翻译
+const usage = `pdf_reader —— 把本地 PDF 变成正常网页，能划词存单词 / 高亮 / 朗读 / 翻译
 
 用法：
   pdf_reader                 扫 ~ 下的 PDF，起在 :8084

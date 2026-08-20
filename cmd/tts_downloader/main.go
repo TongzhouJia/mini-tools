@@ -37,7 +37,7 @@ type TTSResponse struct {
 	} `json:"error,omitempty"`
 }
 
-const usage = `🔊 tts_downloader —— 用 Google TTS 把文本合成 mp3 存下来
+const usage = `tts_downloader —— 用 Google TTS 把文本合成 mp3 存下来
 
 用法：
   tts_downloader     交互式，按提示走

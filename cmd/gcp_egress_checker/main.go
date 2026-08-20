@@ -85,7 +85,7 @@ func init() {
 	flag.BoolVar(&showSetup, "setup", false, "打印开启 BigQuery 账单导出的步骤")
 }
 
-const usage = `📊 gcp_egress_checker —— 查 GCP 出站流量用了多少、离免费额度还剩多少
+const usage = `gcp_egress_checker —— 查 GCP 出站流量用了多少、离免费额度还剩多少
 
 用法：
   gcp_egress_checker              查本月

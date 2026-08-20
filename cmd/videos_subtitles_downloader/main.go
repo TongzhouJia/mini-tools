@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const usage = `🎬 videos_subtitles_downloader —— 下 YouTube 视频连带字幕
+const usage = `videos_subtitles_downloader —— 下 YouTube 视频连带字幕
 
 用法：
   videos_subtitles_downloader    交互式，粘 URL 进去（单个视频或整个播放列表都行）

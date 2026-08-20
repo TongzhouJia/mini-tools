@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const usage = `📱 adb_pusher —— 往手机推文件，推完手机上弹通知告诉你成没成
+const usage = `adb_pusher —— 往手机推文件，推完手机上弹通知告诉你成没成
 
 用法：
   adb_pusher ~/Downloads/xxx.mp4   直接推这个文件或整个文件夹

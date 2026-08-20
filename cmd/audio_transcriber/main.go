@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const usage = `🎙️  audio_transcriber —— 音视频转文字（whisper.cpp，有独显就走 CUDA）
+const usage = `audio_transcriber —— 音视频转文字（whisper.cpp，有独显就走 CUDA）
 
 用法：
   audio_transcriber              交互式：提示你输入文件夹，批量转里面所有音视频
@@ -23,8 +23,8 @@ const usage = `🎙️  audio_transcriber —— 音视频转文字（whisper.cp
   xxx.srt   带时间轴的字幕
 
 行为：
-  ⏭️  断点续传 —— 同名 .txt 已存在就跳过，中断了直接重跑，不会白干
-  🚀 实测 RTX 4060 + large-v3 约 14 倍速（1 小时音频约 4 分钟）
+  断点续传 —— 同名 .txt 已存在就跳过，中断了直接重跑，不会白干
+  实测 RTX 4060 + large-v3 约 14 倍速（1 小时音频约 4 分钟）
 
 依赖：ffmpeg、whisper-cli（whisper.cpp）
 环境变量：

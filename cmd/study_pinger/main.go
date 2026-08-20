@@ -455,7 +455,7 @@ func acquireLock() (*os.File, error) {
 	return f, nil
 }
 
-const usage = `⏰ study_pinger —— 随机时点弹窗问「你现在在干嘛」，采样统计时间都花哪了
+const usage = `study_pinger —— 随机时点弹窗问「你现在在干嘛」，采样统计时间都花哪了
 
 用法：
   study_pinger           后台跑着，平均每 45 分钟弹一次

@@ -62,7 +62,7 @@ func defaultEnvPath() string {
 	return filepath.Join(home(), "go-projects", "mini-tools", ".env")
 }
 
-const usage = `📖 jp_reader —— 日语点读笔：粘一段日语，自己划段，点一下就念
+const usage = `jp_reader —— 日语点读笔：粘一段日语，自己划段，点一下就念
 
 用法：
   jp_reader                起在 :8086，浏览器打开 http://localhost:8086

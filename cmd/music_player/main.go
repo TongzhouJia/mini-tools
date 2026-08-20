@@ -245,7 +245,7 @@ func lanIPs() []string {
 	return ips
 }
 
-const usage = `🎵 music_player —— 局域网点歌台，手机开网页点歌、声音从这台电脑出
+const usage = `music_player —— 局域网点歌台，手机开网页点歌、声音从这台电脑出
 
 用法：
   music_player                    默认音乐目录，起在 :8082
@@ -261,7 +261,7 @@ const usage = `🎵 music_player —— 局域网点歌台，手机开网页点�
   AUDIO_PLAYER   指定播放器可执行文件，覆盖自动探测
 
 坑：
-  ⚠️  手机报 502 = 手机上的代理/VPN App 截了请求，关掉它或给局域网网段加直连规则
+  手机报 502 = 手机上的代理/VPN App 截了请求，关掉它或给局域网网段加直连规则
 
 参数：
 `

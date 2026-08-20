@@ -29,7 +29,7 @@ var DataDir = func() string {
 	return filepath.Join("data", "vocabulary_comparison")
 }()
 
-const usage = `🔍 vocabulary_comparison —— 拿 Gemini 做近义词辨析
+const usage = `vocabulary_comparison —— 拿 Gemini 做近义词辨析
 
 用法：
   vocabulary_comparison    交互式，按提示走
