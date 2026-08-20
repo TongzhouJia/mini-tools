@@ -12,6 +12,28 @@ import (
 	"strings"
 )
 
+const usage = `🎙️  audio_transcriber —— 音视频转文字（whisper.cpp，有独显就走 CUDA）
+
+用法：
+  audio_transcriber              交互式：提示你输入文件夹，批量转里面所有音视频
+  audio_transcriber -f xxx.mp3   只转这一个文件（mp3 / mp4 都行）
+
+产物（跟源文件同目录、同名，一次出两个）：
+  xxx.txt   整篇纯文本
+  xxx.srt   带时间轴的字幕
+
+行为：
+  ⏭️  断点续传 —— 同名 .txt 已存在就跳过，中断了直接重跑，不会白干
+  🚀 实测 RTX 4060 + large-v3 约 14 倍速（1 小时音频约 4 分钟）
+
+依赖：ffmpeg、whisper-cli（whisper.cpp）
+环境变量：
+  WHISPER_MODEL  模型文件路径（默认 ~/ggml-large-v3.bin）
+  WHISPER_BIN    whisper 可执行文件（默认 whisper-cli）
+
+参数：
+`
+
 // 模型路径和 whisper 可执行文件都可以用环境变量覆盖。
 var (
 	modelPath  = envOr("WHISPER_MODEL", defaultPath("ggml-large-v3.bin"))
@@ -50,6 +72,11 @@ func checkDeps() error {
 }
 
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	singleFile := flag.String("f", "", "只处理这一个音视频文件（给了就跳过交互式输入文件夹）")
 	flag.Parse()
 

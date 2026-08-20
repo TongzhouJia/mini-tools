@@ -37,7 +37,24 @@ type TTSResponse struct {
 	} `json:"error,omitempty"`
 }
 
+const usage = `🔊 tts_downloader —— 用 Google TTS 把文本合成 mp3 存下来
+
+用法：
+  tts_downloader     交互式，按提示走
+
+产物：data/tts_downloader/（相对当前目录！所以要在 ~/go-projects/mini-tools 下跑）
+依赖：GOOGLE_TTS_API_KEY，从当前目录的 .env 读
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	// 尝试手动读取 .env 文件（简单实现，不使用第三方库，避免依赖报错）
 	workDir, _ := os.Getwd()
 	envPath := filepath.Join(workDir, ".env")

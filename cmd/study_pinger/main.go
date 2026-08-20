@@ -455,7 +455,33 @@ func acquireLock() (*os.File, error) {
 	return f, nil
 }
 
+const usage = `⏰ study_pinger —— 随机时点弹窗问「你现在在干嘛」，采样统计时间都花哪了
+
+用法：
+  study_pinger           后台跑着，平均每 45 分钟弹一次
+  study_pinger -now      启动就先弹一次，用来试效果
+  study_pinger -mean 20  改成平均 20 分钟一次
+
+统计页面：http://localhost:8085
+
+数据：
+  默认 ~/.local/share/study_pinger，用 -data 或 PINGER_DATA_DIR 改
+依赖：
+  zenity（GNOME 自带的弹窗程序），没有就弹不出来
+环境变量：
+  PINGER_MEAN_MIN   平均间隔分钟数
+  PINGER_HOURS      活动时段，时段外不打扰（默认 09:00-23:00）
+  PINGER_IDLE_TAGS  哪些答案算「没在学」
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.StringVar(&dataDir, "data", "", "数据目录（默认 ~/.local/share/study_pinger，或 PINGER_DATA_DIR）")
 	flag.StringVar(&port, "port", defaultPort, "统计页面端口")
 	flag.Float64Var(&meanMin, "mean", 0, "平均采样间隔/分钟（默认 45，或 PINGER_MEAN_MIN）")

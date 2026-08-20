@@ -71,7 +71,34 @@ func home() string {
 	return h
 }
 
+const usage = `📖 pdf_reader —— 把本地 PDF 变成正常网页，能划词存单词 / 高亮 / 朗读 / 翻译
+
+用法：
+  pdf_reader                 扫 ~ 下的 PDF，起在 :8084
+  pdf_reader -dir ~/Books    只扫这个目录
+
+网页里怎么用（选中文字后按键）：
+  a 存单词 · s 高亮 · r 朗读 · f 翻译 · d 诊断
+
+为什么要这么绕：
+  file:// 打开的 PDF 是 PDFium 沙箱、没有 DOM，油猴脚本一类全废
+  所以这里用 pdf.js 自己渲染，才拿得到文字
+
+数据：
+  单词本 / 高亮 / 缓存默认在 data/pdf_reader（相对当前目录！用 -data 或 PDF_READER_DATA_DIR 改）
+  pdf.js 默认在 ~/.local/share/pdfjs，没有会自动从官方 release 下一份
+依赖：
+  Google Translate / TTS 的 API Key，从 .env 读（默认当前目录的 .env）
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.StringVar(&rootDir, "dir", home(), "扫哪个目录下的 PDF")
 	flag.StringVar(&pdfjsDir, "pdfjs", envOr("PDFJS_DIR", filepath.Join(home(), ".local", "share", "pdfjs")), "pdf.js dist 解压后的目录（没有会自动从官方 release 下载）")
 	flag.StringVar(&dataDir, "data", envOr("PDF_READER_DATA_DIR", filepath.Join("data", "pdf_reader")), "单词本 / 高亮 / 缓存存哪儿")

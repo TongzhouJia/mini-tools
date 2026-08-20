@@ -20,7 +20,27 @@ type VideoFile struct {
 	Duration float64 `json:"duration"`
 }
 
+const usage = `⏱️  video_duration_calculator —— 算一个目录下所有视频加起来多长
+
+用法：
+  video_duration_calculator    起在 :8081，浏览器打开后在页面里填目录路径
+
+认这些格式：mp4 / mkv / avi / mov / flv / wmv
+依赖：ffprobe（ffmpeg 带的）
+
+⚠️  坑：首页是 http.ServeFile 读当前目录的 index.html，
+    必须在 cmd/video_duration_calculator/ 里启动，否则打开就是白屏
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 	})

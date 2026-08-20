@@ -117,7 +117,27 @@ func insertTaskWithRetry(srv *tasks.Service, listId string, task *tasks.Task) er
 	return fmt.Errorf("在重试 %d 次后依然失败", maxRetries)
 }
 
+const usage = `✅ google_task_writter —— 往 Google Tasks 写待办
+
+用法：
+  google_task_writter    交互式，按提示走
+
+首次要授权：会打印一个链接，浏览器打开、同意、把授权码粘回来
+凭据：默认 data/google_task_writer/credentials.json（相对当前目录），用 GOOGLE_TASKS_CREDENTIALS 改
+环境变量：LINGO_BASE_DIR
+
+⚠️  应用还挂在 Testing 状态，refresh_token 每 7 天过期，过期了得重新授权
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	ctx := context.Background()
 
 	// 1. 加载 Google API 凭据（默认取仓库里的 data/google_task_writer/credentials.json）

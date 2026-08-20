@@ -245,7 +245,33 @@ func lanIPs() []string {
 	return ips
 }
 
+const usage = `🎵 music_player —— 局域网点歌台，手机开网页点歌、声音从这台电脑出
+
+用法：
+  music_player                    默认音乐目录，起在 :8082
+  music_player -dir ~/Music/xx    换个目录
+  music_player -port 9000         换端口
+
+起来之后：
+  本机 http://localhost:8082 ，手机连同一个 Wi-Fi 用它打印出来的局域网地址
+  歌是在这台电脑上放的，手机只是遥控器
+
+依赖：mpv 或 ffplay（二选一，装哪个用哪个）
+环境变量：
+  AUDIO_PLAYER   指定播放器可执行文件，覆盖自动探测
+
+坑：
+  ⚠️  手机报 502 = 手机上的代理/VPN App 截了请求，关掉它或给局域网网段加直连规则
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.StringVar(&musicDir, "dir", defaultMusicDir, "音乐目录")
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
 	flag.Parse()

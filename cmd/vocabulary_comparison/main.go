@@ -29,7 +29,24 @@ var DataDir = func() string {
 	return filepath.Join("data", "vocabulary_comparison")
 }()
 
+const usage = `🔍 vocabulary_comparison —— 拿 Gemini 做近义词辨析
+
+用法：
+  vocabulary_comparison    交互式，按提示走
+
+数据：默认 data/vocabulary_comparison（相对当前目录），用 VOCAB_DATA_DIR 改
+依赖：GEMINI_API_KEY，从当前目录的 .env 读，或者 export 一个
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	// 尝试手动读取 .env 文件
 	workDir, _ := os.Getwd()
 	envPath := filepath.Join(workDir, ".env")

@@ -65,7 +65,33 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+const usage = `📚 context_vocab —— 在句子里记单词，跟 Google Tasks 双向同步，每天发单词日报
+
+用法：
+  context_vocab              起服务（默认 :8083，0.0.0.0 所以手机也能开）
+  context_vocab -import      从 Tasks 导一次词就退出，不起服务
+  context_vocab -push        把整本词推到 Tasks 就退出
+  context_vocab -mail        导入 + 发一封单词日报就退出（定时器用的就是这个）
+  context_vocab -mail -dry-run   只把信打到终端，不真发
+
+日报内容：昨天的新词 + 今天该复习的词，复习间隔用 -review-days 调
+
+数据：
+  默认 data/context_vocab（相对当前目录！用 -data 或 CONTEXT_VOCAB_DATA_DIR 改）
+  ⚠️  主键是 Google Tasks 的 task id，created_at 不许重置，重置了复习节奏就乱
+依赖：
+  GOOGLE_TRANSLATE_API_KEY 从 .env 读；Key 缺了不致命，句子和词照样存，中文列留空自己填
+  同步默认走 Tasks 的 "To do" 列表，用 -tasks-list 改
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.StringVar(&dataDir, "data", envOr("CONTEXT_VOCAB_DATA_DIR", filepath.Join("data", "context_vocab")), "句子和单词存哪儿")
 	flag.StringVar(&port, "port", envOr("CONTEXT_VOCAB_PORT", defaultPort), "监听端口")
 	flag.StringVar(&envPath, "env", ".env", "从哪读 GOOGLE_TRANSLATE_API_KEY")

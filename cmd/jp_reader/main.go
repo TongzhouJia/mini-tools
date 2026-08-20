@@ -62,7 +62,31 @@ func defaultEnvPath() string {
 	return filepath.Join(home(), "go-projects", "mini-tools", ".env")
 }
 
+const usage = `📖 jp_reader —— 日语点读笔：粘一段日语，自己划段，点一下就念
+
+用法：
+  jp_reader                起在 :8086，浏览器打开 http://localhost:8086
+  jp_reader -port 9000     换端口
+
+网页里怎么用：
+  粘进文章 → 拖选一段按回车把它划成一段 → 之后点那段就念
+  嗓子和语速页面上能换，每篇文章各记各的
+
+数据：
+  默认 ~/.local/share/jp_reader（文章 + 音频缓存），用 -data 或 JP_READER_DATA_DIR 改
+依赖：
+  Google TTS / Translate 的 API Key，从 .env 读（默认 ~/go-projects/mini-tools/.env）
+  Key 缺了不致命 —— 文章照样存得进去，只是合成和翻译会返回一句人话错误
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.StringVar(&dataDir, "data", envOr("JP_READER_DATA_DIR", filepath.Join(home(), ".local", "share", "jp_reader")), "文章和音频缓存存哪儿")
 	flag.StringVar(&port, "port", defaultPort, "监听端口")
 	flag.StringVar(&envPath, "env", defaultEnvPath(), "从哪读 GOOGLE_TTS_API_KEY / GOOGLE_TRANSLATE_API_KEY")

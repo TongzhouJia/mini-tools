@@ -9,7 +9,26 @@ import (
 	"strings"
 )
 
+const usage = `🎬 videos_subtitles_downloader —— 下 YouTube 视频连带字幕
+
+用法：
+  videos_subtitles_downloader    交互式，粘 URL 进去（单个视频或整个播放列表都行）
+
+产物：~/Videos/yt-dlp/，用 YTDLP_DIR 环境变量改
+依赖：yt-dlp
+
+注意：只下音频的话别用这个，用 yt-audio 脚本
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	// 1. 设置下载根目录（可用 YTDLP_DIR 环境变量覆盖）
 	baseDir := strings.TrimSpace(os.Getenv("YTDLP_DIR"))
 	if baseDir == "" {

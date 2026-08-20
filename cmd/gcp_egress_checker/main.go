@@ -85,7 +85,34 @@ func init() {
 	flag.BoolVar(&showSetup, "setup", false, "打印开启 BigQuery 账单导出的步骤")
 }
 
+const usage = `📊 gcp_egress_checker —— 查 GCP 出站流量用了多少、离免费额度还剩多少
+
+用法：
+  gcp_egress_checker              查本月
+  gcp_egress_checker -month 2026-07   查指定月
+  gcp_egress_checker -json        输出 JSON，给脚本消费（月底播报邮件用的就是这个）
+  gcp_egress_checker -setup       打印怎么开 BigQuery 账单导出
+
+数据源（-source）：
+  auto        先试 monitoring，不行再退 bq（默认）
+  monitoring  Cloud Monitoring，快但只有近似值
+  bq          BigQuery 账单导出，准但要先开导出（见 -setup）
+
+默认免费额度 200 GiB，超额按 0.085 USD/GiB 估（Standard Tier 美洲区参考价）
+账单月按 America/Los_Angeles 算 —— 别用本地时区，会差一天
+
+依赖：gcloud（monitoring 模式）、bq（BigQuery 模式）
+环境变量：GCP_EGRESS_PROJECT / _QUOTA_GIB / _TZ / _RATE / _BQ_TABLE / _SKU
+
+参数：
+`
+
 func main() {
+	flag.CommandLine.SetOutput(os.Stdout)
+	flag.Usage = func() {
+		fmt.Print(usage)
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	if showSetup {

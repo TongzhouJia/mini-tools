@@ -11,7 +11,27 @@ import (
 	"strings"
 )
 
+const usage = `📱 adb_pusher —— 往手机推文件，推完手机上弹通知告诉你成没成
+
+用法：
+  adb_pusher ~/Downloads/xxx.mp4   直接推这个文件或整个文件夹
+  adb_pusher                       不给参数就交互式问你要推啥
+
+推到哪：手机的 /sdcard/download/（写死的，改要动代码）
+方向：本机 → 手机。反过来从手机拷东西用 adb pull
+
+依赖：adb，且手机已经开好 USB 调试并授权过这台电脑
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			fmt.Print(usage)
+			return
+		}
+	}
+
 	fmt.Println("=== ADB 文件传输工具 ===")
 
 	// 1. 检查本地环境是否有 adb
