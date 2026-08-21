@@ -24,12 +24,14 @@ const usage = `audio_transcriber —— 音视频转文字（whisper.cpp，有�
 
 行为：
   断点续传 —— 同名 .txt 已存在就跳过，中断了直接重跑，不会白干
-  实测 RTX 4060 + large-v3 约 14 倍速（1 小时音频约 4 分钟）
+  默认带防死循环参数（-mc 0 + VAD），没它会有整集被重复行刷屏且退出码照样是 0
+  实测 RTX 4060 + large-v3 约 19 倍速（1 小时音频约 3 分半）
 
-依赖：ffmpeg、whisper-cli（whisper.cpp）
+依赖：ffmpeg、whisper-cli（whisper.cpp）、silero VAD 模型（缺了会自动退回不带 VAD）
 环境变量：
-  WHISPER_MODEL  模型文件路径（默认 ~/ggml-large-v3.bin）
-  WHISPER_BIN    whisper 可执行文件（默认 whisper-cli）
+  WHISPER_MODEL      模型文件路径（默认 ~/ggml-large-v3.bin）
+  WHISPER_BIN        whisper 可执行文件（默认 whisper-cli）
+  WHISPER_VAD_MODEL  VAD 模型（默认 ~/ggml-silero-v5.1.2.bin）
 
 参数：
 `
@@ -38,6 +40,7 @@ const usage = `audio_transcriber —— 音视频转文字（whisper.cpp，有�
 var (
 	modelPath  = envOr("WHISPER_MODEL", defaultPath("ggml-large-v3.bin"))
 	whisperBin = envOr("WHISPER_BIN", "whisper-cli")
+	vadModel   = envOr("WHISPER_VAD_MODEL", defaultPath("ggml-silero-v5.1.2.bin"))
 )
 
 // envOr 取环境变量，为空时回退到默认值。
@@ -213,15 +216,27 @@ func transcribe(inputPath, outputBase string) error {
 
 	// 2. 用 whisper-cli 识别，输出与原文件同名的 .txt（纯文本）和 .srt（带时间轴的字幕）
 	fmt.Println("🗣️  正在语音转文字...")
-	whisperCmd := exec.Command(whisperBin,
+	args := []string{
 		"-m", modelPath,
 		"-f", wavPath,
 		"-l", "auto",
+		// -mc 0：不拿上一段的输出当下一段的提示。默认行为会让模型在长静音/
+		// 广告/说话人重叠处锁进死循环，把同一句话重复上千遍直到音频结束，
+		// 而且退出码照样是 0——2026-08-20 那批 30 集里有 15 集是这么废掉的。
+		"-mc", "0",
 		"-otxt",
 		"-osrt",
 		"-of", outputBase,
 		"-pp",
-	)
+	}
+	// VAD 先把静音段切掉，既堵死循环的触发源，又因为不用喂静音给模型而更快
+	// （实测 65 分钟那集从 14.5 倍速提到 19 倍速）。模型缺了就退回不带 VAD。
+	if _, err := os.Stat(vadModel); err == nil {
+		args = append(args, "--vad", "-vm", vadModel)
+	} else {
+		fmt.Printf("⚠️  找不到 VAD 模型 %s，本次不启用 VAD\n", vadModel)
+	}
+	whisperCmd := exec.Command(whisperBin, args...)
 	whisperCmd.Stdout = os.Stdout
 	whisperCmd.Stderr = os.Stderr
 	if err := whisperCmd.Run(); err != nil {
