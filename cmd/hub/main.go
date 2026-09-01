@@ -26,7 +26,7 @@ type Service struct {
 	Desc string   `json:"desc"`           // 一句话说明
 	Port int      `json:"port"`           // 监听端口
 	Path string   `json:"path,omitempty"` // 打开时附加的路径，默认 /
-	Exec string   `json:"exec,omitempty"` // 启动命令，空 = hub 不管它的死活
+	Exec string   `json:"exec,omitempty"` // 启动命令，可以带参数（如 "…/jp_reader -lan"），空 = hub 不管它的死活
 	Dir  string   `json:"dir,omitempty"`  // 工作目录
 	Env  []string `json:"env,omitempty"`  // 额外环境变量，KEY=VALUE
 	Unit string   `json:"unit,omitempty"` // systemd 用户单元名，空则按 hub-<id>.service 生成
@@ -162,19 +162,19 @@ func defaultConfig(home string) Config {
 			{ID: "clip_bridge", Name: "互传中转站", Desc: "手机电脑传文件和文字，能一键发邮件", Port: 8088,
 				Exec: bin("clip_bridge"), Dir: home, Auto: true, LAN: true},
 			{ID: "jp_reader", Name: "日语点读笔", Desc: "粘日语、划段、点一下就念", Port: 8086,
-				Exec: bin("jp_reader"), Dir: mini, Auto: true},
+				Exec: bin("jp_reader") + " -lan", Dir: mini, Auto: true, LAN: true},
 			{ID: "en_drill", Name: "英语单词自测", Desc: "拿 In Our Time 的原声当提示", Port: 8087,
-				Exec: bin("en_drill"), Dir: mini, Auto: true},
+				Exec: bin("en_drill") + " -lan", Dir: mini, Auto: true, LAN: true},
 			// 网页那半边住在 lexica 里（/vocab/），没有自己的进程
 			{ID: "vocab", Name: "带上下文的单词本", Desc: "粘整句、点词圈中、存下来（在 lexica 里）", Port: 8080,
 				Path: "/vocab/", Auto: false, LAN: true},
 			{ID: "pdf_reader", Name: "PDF 阅读器", Desc: "本地 PDF 变正常网页，能查词朗读", Port: 8084,
-				Exec: bin("pdf_reader"), Dir: mini, Auto: true},
+				Exec: bin("pdf_reader") + " -lan", Dir: mini, Auto: true, LAN: true},
 			{ID: "video_duration", Name: "视频时长统计", Desc: "填个目录，算总时长", Port: 8081,
 				Exec: bin("video_duration_calculator"),
-				Dir:  filepath.Join(mini, "cmd", "video_duration_calculator"), Auto: true},
+				Dir:  filepath.Join(mini, "cmd", "video_duration_calculator"), Auto: true, LAN: true},
 			{ID: "study_pinger", Name: "学习时间采样", Desc: "随机弹窗问你在干嘛，这页是统计", Port: 8083,
-				Unit: "study_pinger.service", Auto: false},
+				Unit: "study_pinger.service", Auto: false, LAN: true},
 		},
 		Repos: []Repo{
 			{Name: "mini-tools", Path: filepath.Join(home, "go-projects", "mini-tools"), Desc: "所有小工具的仓库"},
@@ -211,6 +211,15 @@ func loadConfig() error {
 	}
 	cfg = c
 	return nil
+}
+
+// execBin 取出启动命令里的可执行文件路径，丢掉后面的参数。
+func execBin(cmd string) string {
+	f := strings.Fields(cmd)
+	if len(f) == 0 {
+		return ""
+	}
+	return f[0]
 }
 
 func unitName(s Service) string {
@@ -265,8 +274,9 @@ func doInstall() {
 			fmt.Printf("[跳过] %s：没写 exec，不知道怎么启动\n", s.Name)
 			continue
 		}
-		if _, err := os.Stat(s.Exec); err != nil {
-			fmt.Printf("[跳过] %s：找不到 %s\n", s.Name, s.Exec)
+		// exec 可以带参数，只检查最前面那个可执行文件在不在
+		if _, err := os.Stat(execBin(s.Exec)); err != nil {
+			fmt.Printf("[跳过] %s：找不到 %s\n", s.Name, execBin(s.Exec))
 			continue
 		}
 		name := unitName(s)

@@ -487,6 +487,8 @@ func main() {
 	flag.Float64Var(&meanMin, "mean", 0, "平均采样间隔/分钟（默认 45，或 PINGER_MEAN_MIN）")
 	flag.StringVar(&hoursArg, "hours", "", "活动时段，时段外不打扰（默认 09:00-23:00，或 PINGER_HOURS）")
 	flag.BoolVar(&pingNow, "now", false, "启动时立刻弹一次（用来试效果）")
+	var lan bool
+	flag.BoolVar(&lan, "lan", false, "统计页面监听 0.0.0.0，同一个 Wi-Fi 下手机也能看（默认只有本机能开）")
 	flag.Parse()
 
 	if dataDir == "" {
@@ -563,7 +565,11 @@ func main() {
 
 	// 采样才是核心功能，web 只是拿来看数据的。端口起不来就只警告，
 	// 采样循环照跑——之前这里是 log.Fatalf，附属功能把主功能一起杀了。
-	ln, err := net.Listen("tcp4", "127.0.0.1:"+port)
+	listenHost := "127.0.0.1"
+	if lan {
+		listenHost = "0.0.0.0"
+	}
+	ln, err := net.Listen("tcp4", listenHost+":"+port)
 	if err != nil {
 		fmt.Printf("⚠️ 端口 %s 用不了（%v），统计页面开不了，但采样照常进行\n", port, err)
 		select {} // 守住采样 goroutine

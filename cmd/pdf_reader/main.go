@@ -107,6 +107,8 @@ func main() {
 	flag.StringVar(&transTo, "to", "zh-CN", "翻译成哪种语言")
 	flag.StringVar(&voiceLang, "voice", "en-AU", "朗读语种（选中的是中日韩会自动切 cmn-CN）")
 	flag.StringVar(&voiceName, "voice-name", "en-AU-Chirp3-HD-Achernar", "具体哪把嗓子，留空让 Google 自己挑；`gcloud`/voices 接口能列全")
+	var lan bool
+	flag.BoolVar(&lan, "lan", false, "监听 0.0.0.0，同一个 Wi-Fi 下手机也能开（默认只有本机能开）")
 	flag.Parse()
 
 	abs, err := filepath.Abs(rootDir)
@@ -144,6 +146,9 @@ func main() {
 	initGCP(envPath)
 
 	addr := "127.0.0.1:" + port
+	if lan {
+		addr = "0.0.0.0:" + port
+	}
 	fmt.Printf("📖 PDF 阅读器起来了：http://localhost:%s\n", port)
 	fmt.Printf("   扫描目录：%s\n", rootDir)
 	fmt.Printf("   单词本：  %s\n", wordsDir())

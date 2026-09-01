@@ -88,6 +88,8 @@ func main() {
 	flag.StringVar(&tier, "tier", "core", "刷哪一档：core（跨集复现+全部短语）/ extra（只出现一次的）/ all")
 	flag.IntVar(&limit, "limit", 60, "一轮最多几张")
 	flag.IntVar(&fresh, "new", 20, "一轮最多放几个新词")
+	var lan bool
+	flag.BoolVar(&lan, "lan", false, "监听 0.0.0.0，同一个 Wi-Fi 下手机也能开（默认只有本机能开）")
 	flag.Parse()
 
 	var err error
@@ -127,7 +129,11 @@ func main() {
 	fmt.Printf("   这一档（%s）：今天到期 %d，还没见过 %d\n", tier, st.Due, st.Fresh)
 	fmt.Printf("   进度：%s\n", filepath.Join(dataDir, "progress.json"))
 
-	if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
+	host := "127.0.0.1"
+	if lan {
+		host = "0.0.0.0"
+	}
+	if err := http.ListenAndServe(host+":"+port, nil); err != nil {
 		log.Fatalf("起不来（端口被占了？换 -port）：%v", err)
 	}
 }

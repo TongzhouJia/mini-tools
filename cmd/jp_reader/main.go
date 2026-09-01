@@ -93,6 +93,8 @@ func main() {
 	flag.StringVar(&defaultVoice, "voice", "ja-JP-Chirp3-HD-Achernar", "默认嗓子（页面上能换，每篇文章各记各的）")
 	flag.Float64Var(&defaultRate, "rate", 1.0, "默认语速 0.25–2.0")
 	flag.StringVar(&transTo, "to", "zh-CN", "翻译成哪种语言")
+	var lan bool
+	flag.BoolVar(&lan, "lan", false, "监听 0.0.0.0，同一个 Wi-Fi 下手机也能开（默认只有本机能开）")
 	flag.Parse()
 
 	if err := os.MkdirAll(docsDir(), 0o755); err != nil {
@@ -118,7 +120,11 @@ func main() {
 	fmt.Printf("   合成 %s   翻译 %s   Key 读自 %s\n", tick(ttsKey != ""), tick(translateKey != ""), envPath)
 	fmt.Printf("   用法：拖选一段按回车划成一段，之后点它就念\n")
 
-	if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
+	host := "127.0.0.1"
+	if lan {
+		host = "0.0.0.0"
+	}
+	if err := http.ListenAndServe(host+":"+port, nil); err != nil {
 		log.Fatalf("起不来（端口被占了？换 -port）：%v", err)
 	}
 }
