@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>单词写进 Task</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#fff; --fg:#22201d; --muted:#7b756c;
+    --line:#e3ded5; --accent:#3b6ea5; --ok:#2f7d51; --bad:#b3402f; --dup:#a8792a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#191817; --card:#232120; --fg:#eae6e0; --muted:#9c948a;
+           --line:#38342f; --accent:#7aa7d8; --ok:#6cc08c; --bad:#e08573; --dup:#d8ab5c; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.6 system-ui,"Noto Sans CJK SC","PingFang SC",sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  textarea{width:100%;min-height:190px;resize:vertical;background:transparent;color:var(--fg);
+           border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.6 ui-monospace,Menlo,monospace}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  select,button{font:14px/1.4 inherit;border-radius:8px;border:1px solid var(--line);
+                background:var(--card);color:var(--fg);padding:8px 12px}
+  button{cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  .muted{color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:500;font-size:12px}
+  td.kind{color:var(--muted);font-size:12px;white-space:nowrap}
+  td.notes{color:var(--muted)}
+  tr.dup td.title::after{content:"重复";margin-left:8px;color:var(--dup);font-size:11px;
+                         border:1px solid var(--dup);border-radius:4px;padding:0 4px}
+  tr.done td.title{color:var(--ok)}
+  tr.err td.title{color:var(--bad)}
+  .bar{height:4px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:10px;display:none}
+  .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+  .log{white-space:pre-wrap;font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);margin-top:8px}
+  .empty{color:var(--muted);padding:8px 2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>单词写进 Task</h1>
+  <div class="sub">
+    日语：<code>日语,假名,中文</code> → 标题「日语,中文」，假名放细节 ·
+    英语：<code>English,Chinese</code> → 标题英文，释义放细节 · 表头行自动跳过
+  </div>
+
+  <div class="card">
+    <textarea id="src" placeholder='把单词表整段粘进来，两种格式可以混着放，比如：
+
+日文,假名,中文,音频
+"発達","はったつ","发展、发达",""
+"情報","じょうほう","信息",""
+
+English,Chinese
+"momentous","adj. 重大的、影响深远的"
+"neutron","n. 中子"'></textarea>
+    <div class="row">
+      <label class="muted">写进列表</label>
+      <select id="list"></select>
+      <button id="parse">看看会写成啥</button>
+      <button id="push" class="primary" disabled>写进去</button>
+      <span id="stat" class="muted"></span>
+    </div>
+    <div class="bar" id="bar"><i></i></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th style="width:28px"><input type="checkbox" id="all" checked></th>
+        <th style="width:52px">格式</th><th>标题（写在任务上）</th><th>细节</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="empty">还没解析。</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let rows = [];
+
+async function loadLists(){
+  try{
+    const r = await fetch('/api/lists');
+    const d = await r.json();
+    $('#list').innerHTML = d.lists.map(l =>
+      `<option${l.name === '外语得学啊' ? ' selected' : ''}>${esc(l.name)}</option>`).join('');
+  }catch(e){ log('列表读不出来：' + e); }
+}
+
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function log(s){ $('#log').textContent = s; }
+
+function render(){
+  const tb = $('#rows');
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="4" class="empty">一行都没认出来。</td></tr>'; return; }
+  tb.innerHTML = rows.map((r,i) => `
+    <tr class="${r.dup?'dup':''}" id="r${i}">
+      <td><input type="checkbox" data-i="${i}" ${r.dup?'':'checked'}></td>
+      <td class="kind">${r.kind}</td>
+      <td class="title">${esc(r.title)}</td>
+      <td class="notes">${esc(r.notes)}</td>
+    </tr>`).join('');
+  updateStat();
+  tb.querySelectorAll('input').forEach(c => c.onchange = updateStat);
+}
+
+function picked(){
+  return [...document.querySelectorAll('#rows input:checked')].map(c => rows[+c.dataset.i]);
+}
+function updateStat(){
+  const n = picked().length;
+  const dup = rows.filter(r => r.dup).length;
+  $('#stat').textContent = `认出 ${rows.length} 条，勾了 ${n} 条` + (dup ? `，${dup} 条重复已自动去掉` : '');
+  $('#push').disabled = n === 0;
+}
+
+$('#all').onchange = e => {
+  document.querySelectorAll('#rows input[data-i]').forEach(c => c.checked = e.target.checked);
+  updateStat();
+};
+
+$('#parse').onclick = async () => {
+  log('');
+  const r = await fetch('/api/parse', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text: $('#src').value, list: $('#list').value})});
+  if(!r.ok){ log('解析失败：' + await r.text()); return; }
+  const d = await r.json();
+  rows = d.rows; render();
+  if(d.warn) log(d.warn);
+};
+
+$('#push').onclick = async () => {
+  const items = picked();
+  if(!items.length) return;
+  $('#push').disabled = true; $('#parse').disabled = true;
+  $('#bar').style.display = 'block'; $('#bar').firstElementChild.style.width = '0';
+  let done = 0;
+  const r = await fetch('/api/push', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({list: $('#list').value, items})});
+  if(!r.ok){ log('写不进去：' + await r.text()); $('#parse').disabled = false; return; }
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  for(;;){
+    const {value, done: end} = await reader.read();
+    if(end) break;
+    buf += dec.decode(value, {stream:true});
+    const lines = buf.split('\n'); buf = lines.pop();
+    for(const line of lines){
+      if(!line.trim()) continue;
+      const m = JSON.parse(line);
+      if(m.done){
+        log(`写完了：成功 ${m.ok} 条，失败 ${m.fail} 条，进了「${m.list}」`);
+        $('#bar').firstElementChild.style.width = '100%';
+        continue;
+      }
+      done++;
+      $('#bar').firstElementChild.style.width = (done / items.length * 100) + '%';
+      const idx = rows.indexOf(items[m.i]);
+      const tr = document.getElementById('r' + idx);
+      if(tr) tr.className = m.ok ? 'done' : 'err';
+      if(!m.ok) log(`「${m.title}」失败：${m.err}`);
+    }
+  }
+  $('#parse').disabled = false;
+  updateStat();
+};
+
+$('#src').addEventListener('keydown', e => {
+  if((e.metaKey || e.ctrlKey) && e.key === 'Enter') $('#parse').click();
+});
+
+loadLists();
+</script>
+</body>
+</html>
