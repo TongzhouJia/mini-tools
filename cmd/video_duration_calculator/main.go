@@ -14,6 +14,12 @@ import (
 	"strings"
 )
 
+// ffprobe 对视频和音频一视同仁，所以音频格式直接混在一起算就行
+var mediaExts = map[string]bool{
+	".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".flv": true, ".wmv": true,
+	".mp3": true, ".m4a": true, ".wav": true, ".flac": true, ".aac": true, ".ogg": true, ".opus": true,
+}
+
 type VideoFile struct {
 	Name     string  `json:"name"`
 	Path     string  `json:"path"`
@@ -25,7 +31,9 @@ const usage = `video_duration_calculator —— 算一个目录下所有视频�
 用法：
   video_duration_calculator    起在 :8081，浏览器打开后在页面里填目录路径
 
-认这些格式：mp4 / mkv / avi / mov / flv / wmv
+认这些格式：
+  视频 mp4 / mkv / avi / mov / flv / wmv
+  音频 mp3 / m4a / wav / flac / aac / ogg / opus
 依赖：ffprobe（ffmpeg 带的）
 
 坑：首页是 http.ServeFile 读当前目录的 index.html，
@@ -78,8 +86,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 			return nil // ignore errors
 		}
 		if !info.IsDir() {
-			ext := strings.ToLower(filepath.Ext(path))
-			if ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" || ext == ".flv" || ext == ".wmv" {
+			if mediaExts[strings.ToLower(filepath.Ext(path))] {
 				videoFiles = append(videoFiles, path)
 			}
 		}
