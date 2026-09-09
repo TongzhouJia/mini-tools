@@ -1,14 +1,21 @@
-// study_pinger —— 学习时间采样器。
+// study_pinger —— 定时提醒起来动一动。
 //
-// 解决的问题：一整天都在学，却说不清时间到底花哪了。靠回忆估时间误差极大，
-// 所以这里用「随机采样」：每隔平均 45 分钟随机弹一个框问「此刻在干嘛」，
-// 答一行字（3 秒的事）。跑一周，把每个标签的 ping 次数乘以平均间隔，
-// 就得到真实的时间分布——不依赖记忆。
+// 原来这是个「学习时间采样器」：随机间隔弹框问「此刻在干嘛」，把回答攒起来
+// 算时间都花哪了。跑了一个月（601 次采样、236 次作答）之后停掉了——
+// 采样能算出时间去哪了，但算不出「为什么坐下就是不开始」，而那才是真问题。
+// 2026-09-09 起改成现在这样：不问、不记、不统计，只按点提醒。
 //
-// 间隔取指数分布（无记忆性），所以你没法预判下一次什么时候来，
-// 也就没法「等它弹完再走神」。弹框本身也是干预：知道随时要交代，人会自己收回来。
+// 改用途的直接起因：X 光查出 L5/S1 椎间盘间隙变窄 + L3-5 略失稳。
+// 症状是坐着加重、走路缓解——坐位的椎间盘内压比站着高四成左右。
+// 所以真正要干预的不是「学没学」，是「连续坐了多久」。
 //
-// 跑起来后同时开一个 http://localhost:8083 看统计。
+// 跟老版本的两个关键反转：
+//   1. 间隔从随机改成固定，而且对齐整点/半点。老版本故意让你预判不了，
+//      因为要防止「等它弹完再走神」；现在目的是养成节律，可预期反而是优点。
+//   2. 从输入框（--entry）改成通知框（--info），一个按钮，不用打字。
+//      一天要弹三十多次，任何需要动手的设计都会在第三天被关掉。
+//
+// 老数据 pings.jsonl 原样留着没删，只是不再往里写。
 package main
 
 import (
@@ -17,14 +24,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +43,7 @@ var indexHTML []byte
 const defaultPort = "8083"
 
 // 默认数据目录：~/.local/share/study_pinger，可用 PINGER_DATA_DIR 覆盖。
+// 现在这个目录里只剩一个 .lock 有用，老的 pings.jsonl 留着当存档。
 var defaultDataDir = func() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -49,16 +55,13 @@ var defaultDataDir = func() string {
 var (
 	dataDir  string
 	port     string
-	meanMin  float64
+	everyMin int
 	hoursArg string
 	pingNow  bool
 
-	mu sync.Mutex // 护住 jsonl 文件的读写
-
-	// 采样器的心跳状态。没有它就只能靠「等了很久没弹」来猜死活，
-	// 而随机间隔本来就可能等 70 分钟——两者分不开人会以为程序坏了。
 	stateMu    sync.Mutex
 	nextPingAt time.Time
+	pingCount  int
 	startedAt  = time.Now()
 )
 
@@ -68,112 +71,46 @@ func setNextPing(t time.Time) {
 	stateMu.Unlock()
 }
 
-func getNextPing() time.Time {
+func getState() (time.Time, int) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
-	return nextPingAt
+	return nextPingAt, pingCount
 }
 
-// 采样间隔的上下界（分钟）。指数分布尾巴很长，不夹一下会出现 3 分钟连弹
-// 或者两小时不响的极端值。
-const (
-	minGapMin = 15
-	maxGapMin = 70
-)
+// 弹框自动关闭的秒数。人不在电脑前时窗口会一直挂着，挂着就卡住整个循环。
+// 比老版本的 300 秒短很多——那时候要等人打字，现在只是看一眼。
+const popupTimeoutSec = 90
 
-// zenity 等回答的上限。人不在电脑前时窗口会一直挂着，挂着就卡住整个循环，
-// 所以到点自动关掉记成「未答」——未答本身也是有用的数据（大概率是离开了）。
-const answerTimeoutSec = 300
-
-// 非学习标签。答案里含这些词就算「不在学」，用来算专注率。
-// 可用 PINGER_IDLE_TAGS 覆盖（逗号分隔）。
-var defaultIdleTags = []string{"摸鱼", "休息", "吃饭", "睡觉", "发呆", "刷手机", "刷视频", "家务", "聊天", "游戏", "洗澡", "出门"}
-
-// Ping 是一条采样记录，一行一条存进 pings.jsonl。
-type Ping struct {
-	At         string `json:"at"`          // 弹框时间 RFC3339
-	Answer     string `json:"answer"`      // 回答原文，未答为空
-	Answered   bool   `json:"answered"`    // 有没有答
-	ElapsedSec int    `json:"elapsed_sec"` // 从弹出到答完用了多久
-	GapMin     int    `json:"gap_min"`     // 距上一次 ping 的间隔，统计时长用这个
-}
-
-func dataFile() string { return filepath.Join(dataDir, "pings.jsonl") }
-
-// ---------- 数据读写 ----------
-
-func appendPing(p Ping) error {
-	mu.Lock()
-	defer mu.Unlock()
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(dataFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	line, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(append(line, '\n'))
-	return err
-}
-
-func loadPings() []Ping {
-	mu.Lock()
-	defer mu.Unlock()
-	raw, err := os.ReadFile(dataFile())
-	if err != nil {
-		return nil // 还没开始记，或者目录不存在，都当空数据
-	}
-	var out []Ping
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var p Ping
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			continue // 单行坏了不影响其余
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
-// lastAnswer 取最近一次有效回答，用来预填输入框——
-// 大多数时候你还在干同一件事，直接回车就行，这是把填写成本压到最低的关键。
-func lastAnswer(pings []Ping) string {
-	for i := len(pings) - 1; i >= 0; i-- {
-		if pings[i].Answered && strings.TrimSpace(pings[i].Answer) != "" {
-			return pings[i].Answer
-		}
-	}
-	return ""
+// 提醒正文的第二行，每次随机挑一条。第一行永远是「站起来」，
+// 因为那条才是目的；这些只是防止同一句话看三十遍之后彻底失效。
+var tails = []string{
+	"走两分钟就行，不用做操。",
+	"顺手接杯水。",
+	"坐回去的时候，腰后面垫个东西。",
+	"别塌着坐，靠背用起来。",
+	"站着把这一段想完，再坐下写。",
+	"脖子也转两下。",
+	"眼睛看一下远处。",
+	"上个厕所也算。",
+	"不是让你休息，是让你换个姿势。",
+	"两分钟，比你以为的短。",
 }
 
 // ---------- 弹框 ----------
 
-// ask 弹 zenity 输入框问「此刻在干嘛」，返回回答和是否答了。
-func ask(prefill string) (string, bool) {
+// notify 弹一个只有确定键的通知框。不收任何输入，也不写任何文件。
+func notify() {
+	tail := tails[rand.Intn(len(tails))]
 	args := []string{
-		"--entry",
-		"--title=⏱ 在干嘛？",
-		"--text=<b>此刻你正在做什么？</b>\n\n照实写，一个词就行（例：k8s网络、看yt、摸鱼）。\n在学就写学的内容；没在学就写 摸鱼/休息/吃饭。",
-		"--width=460",
-		"--timeout=" + strconv.Itoa(answerTimeoutSec),
+		"--info",
+		"--title=起来动一下",
+		"--text=<b>坐够 30 分钟了，站起来。</b>\n\n" + tail,
+		"--ok-label=知道了",
+		"--width=380",
+		"--timeout=" + strconv.Itoa(popupTimeoutSec),
 	}
-	if prefill != "" {
-		args = append(args, "--entry-text="+prefill)
-	}
-	out, err := exec.Command("zenity", args...).Output()
-	if err != nil {
-		return "", false // 取消（exit 1）或超时（exit 5）都算未答
-	}
-	answer := strings.TrimSpace(string(out))
-	return answer, answer != ""
+	// 取消、超时、关窗都不算错——这里没有「答对答错」，弹到了就算数。
+	_ = exec.Command("zenity", args...).Run()
 }
 
 // ---------- 时段控制 ----------
@@ -182,11 +119,11 @@ type window struct{ startMin, endMin int }
 
 var activeWindow window
 
-// parseHours 解析 "09:00-23:00" 这种活动时段，时段外不打扰。
+// parseHours 解析 "06:00-23:30" 这种活动时段，时段外不打扰。
 func parseHours(s string) (window, error) {
 	parts := strings.Split(strings.TrimSpace(s), "-")
 	if len(parts) != 2 {
-		return window{}, fmt.Errorf("时段格式应该是 09:00-23:00")
+		return window{}, fmt.Errorf("时段格式应该是 06:00-23:30")
 	}
 	var w window
 	for i, p := range parts {
@@ -211,23 +148,24 @@ func (w window) contains(t time.Time) bool {
 	return cur >= w.startMin || cur < w.endMin // 跨午夜，比如 22:00-02:00
 }
 
-// nextGap 抽下一次间隔：指数分布，均值 meanMin，夹在 [minGapMin, maxGapMin]。
-func nextGap() time.Duration {
-	m := -meanMin * math.Log(1-rand.Float64())
-	if m < minGapMin {
-		m = minGapMin
+// ---------- 提醒循环 ----------
+
+// nextTick 返回下一个对齐的时刻。every=30 就是每个整点和半点。
+// 对齐而不是「从启动时刻开始数」，是为了让它跟墙上的钟对得上——
+// 重启一次就整体偏移几分钟的话，节律感就没了。
+func nextTick(now time.Time, every int) time.Time {
+	step := time.Duration(every) * time.Minute
+	base := now.Truncate(time.Minute)
+	t := base.Truncate(step)
+	for !t.After(now) {
+		t = t.Add(step)
 	}
-	if m > maxGapMin {
-		m = maxGapMin
-	}
-	return time.Duration(m * float64(time.Minute))
+	return t
 }
 
-// ---------- 采样循环 ----------
-
-// 按墙上时钟等到 target。不能直接 time.Sleep(gap)——那用的是单调时钟，
+// 按墙上时钟等到 target。不能直接 time.Sleep——那用的是单调时钟，
 // 机器挂起期间它不走。电脑一睡一整夜，醒来之后计时器还剩大半没走完，
-// 于是整个上午一次都不弹（2026-08-06 就这么丢了一上午）。
+// 于是整个上午一次都不弹（2026-08-06 就这么丢过一上午）。
 func sleepUntil(target time.Time) {
 	for {
 		left := time.Until(target)
@@ -242,193 +180,58 @@ func sleepUntil(target time.Time) {
 }
 
 func pingLoop(w window) {
-	lastAt := time.Now()
-	first := true
 	for {
-		gap := nextGap()
-		if first {
-			// 冷启动先来一次短的。随机间隔最长能到 70 分钟，启动后干等这么久
-			// 没有任何动静，人只会以为程序死了（已经因此被怀疑两次）。
-			// 先弹一次自证还活着，之后再进入正常的随机节奏。
-			gap = time.Duration(2+rand.Intn(4)) * time.Minute
-			first = false
-		}
-		next := time.Now().Add(gap)
+		next := nextTick(time.Now(), everyMin)
 		setNextPing(next)
-		fmt.Printf("⏳ 下一次采样：%s（%.0f 分钟后）\n", next.Format("15:04"), gap.Minutes())
+		fmt.Printf("下一次提醒：%s\n", next.Format("15:04"))
 		sleepUntil(next)
 
 		now := time.Now()
 		if !w.contains(now) {
-			fmt.Printf("⏭️ %s 不在活动时段（%s），跳过\n", now.Format("15:04"), hoursArg)
-			lastAt = now
+			fmt.Printf("%s 不在活动时段（%s），跳过\n", now.Format("15:04"), hoursArg)
 			continue
 		}
-
-		gapMin := int(now.Sub(lastAt).Minutes())
-		lastAt = now
-
-		start := time.Now()
-		answer, ok := ask(lastAnswer(loadPings()))
-		p := Ping{
-			At:         now.Format(time.RFC3339),
-			Answer:     answer,
-			Answered:   ok,
-			ElapsedSec: int(time.Since(start).Seconds()),
-			GapMin:     gapMin,
-		}
-		if err := appendPing(p); err != nil {
-			fmt.Printf("❌ 写记录失败: %v\n", err)
-			continue
-		}
-		if ok {
-			fmt.Printf("✅ %s  %s（%d 秒答完，覆盖前 %d 分钟）\n",
-				now.Format("15:04"), answer, p.ElapsedSec, gapMin)
-		} else {
-			fmt.Printf("⚠️ %s  未答（人可能不在）\n", now.Format("15:04"))
-		}
+		stateMu.Lock()
+		pingCount++
+		n := pingCount
+		stateMu.Unlock()
+		fmt.Printf("%s 提醒（今天第 %d 次）\n", now.Format("15:04"), n)
+		notify()
 	}
 }
 
-// ---------- 统计 ----------
+// ---------- 状态页 ----------
 
-type Bucket struct {
-	Tag     string `json:"tag"`
-	Count   int    `json:"count"`
-	Minutes int    `json:"minutes"`
-	Idle    bool   `json:"idle"`
+type Status struct {
+	NextPing  string `json:"next_ping"`
+	StartedAt string `json:"started_at"`
+	Hours     string `json:"hours"`
+	EveryMin  int    `json:"every_min"`
+	InWindow  bool   `json:"in_window"`
+	Count     int    `json:"count"`
 }
 
-type Stats struct {
-	NextPing     string   `json:"next_ping"`  // 下次采样时间，用来确认采样器还活着
-	StartedAt    string   `json:"started_at"` // 采样器启动时间
-	Hours        string   `json:"hours"`      // 活动时段
-	InWindow     bool     `json:"in_window"`  // 此刻在不在活动时段内
-	Range        string   `json:"range"`
-	Total        int      `json:"total"`         // ping 总数
-	Answered     int      `json:"answered"`      // 答了的
-	StudyMinutes int      `json:"study_minutes"` // 学习类估计时长
-	IdleMinutes  int      `json:"idle_minutes"`  // 非学习类估计时长
-	Switches     int      `json:"switches"`      // 相邻采样标签不同的次数
-	Buckets      []Bucket `json:"buckets"`
-	Recent       []Ping   `json:"recent"`
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	next, n := getState()
+	st := Status{
+		StartedAt: startedAt.Format(time.RFC3339),
+		Hours:     hoursArg,
+		EveryMin:  everyMin,
+		InWindow:  activeWindow.contains(time.Now()),
+		Count:     n,
+	}
+	if !next.IsZero() {
+		st.NextPing = next.Format(time.RFC3339)
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(st)
 }
-
-func idleTags() []string {
-	if s := strings.TrimSpace(os.Getenv("PINGER_IDLE_TAGS")); s != "" {
-		var out []string
-		for _, t := range strings.Split(s, ",") {
-			if t = strings.TrimSpace(t); t != "" {
-				out = append(out, t)
-			}
-		}
-		return out
-	}
-	return defaultIdleTags
-}
-
-func isIdle(answer string) bool {
-	a := strings.ToLower(answer)
-	for _, t := range idleTags() {
-		if strings.Contains(a, strings.ToLower(t)) {
-			return true
-		}
-	}
-	return false
-}
-
-// normTag 把回答归一成统计用的标签：去空格、转小写。
-// 展示时用第一次出现的原文，保留他自己的写法。
-func normTag(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
-
-func computeStats(pings []Ping, rangeName string) Stats {
-	now := time.Now()
-	var since time.Time
-	switch rangeName {
-	case "week":
-		since = now.AddDate(0, 0, -7)
-	default:
-		rangeName = "today"
-		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	}
-
-	st := Stats{Range: rangeName}
-	counts := map[string]*Bucket{}
-	var order []string
-	prevTag := ""
-
-	for _, p := range pings {
-		t, err := time.Parse(time.RFC3339, p.At)
-		if err != nil || t.Before(since) {
-			continue
-		}
-		st.Total++
-		if !p.Answered {
-			continue
-		}
-		st.Answered++
-
-		// 每次采样代表它覆盖的那段时间。gap 缺失（老记录）就退回均值。
-		mins := p.GapMin
-		if mins <= 0 || mins > maxGapMin {
-			mins = int(meanMin)
-		}
-
-		key := normTag(p.Answer)
-		if b, ok := counts[key]; ok {
-			b.Count++
-			b.Minutes += mins
-		} else {
-			counts[key] = &Bucket{Tag: p.Answer, Count: 1, Minutes: mins, Idle: isIdle(p.Answer)}
-			order = append(order, key)
-		}
-		if isIdle(p.Answer) {
-			st.IdleMinutes += mins
-		} else {
-			st.StudyMinutes += mins
-		}
-		if prevTag != "" && prevTag != key {
-			st.Switches++
-		}
-		prevTag = key
-
-		st.Recent = append(st.Recent, p)
-	}
-
-	for _, k := range order {
-		st.Buckets = append(st.Buckets, *counts[k])
-	}
-	sort.Slice(st.Buckets, func(i, j int) bool { return st.Buckets[i].Minutes > st.Buckets[j].Minutes })
-
-	// Recent 只回最近 40 条，倒序（新的在前）
-	for i, j := 0, len(st.Recent)-1; i < j; i, j = i+1, j-1 {
-		st.Recent[i], st.Recent[j] = st.Recent[j], st.Recent[i]
-	}
-	if len(st.Recent) > 40 {
-		st.Recent = st.Recent[:40]
-	}
-	return st
-}
-
-// ---------- web ----------
 
 func cors(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		h(w, r)
 	}
-}
-
-func handleStats(w http.ResponseWriter, r *http.Request) {
-	st := computeStats(loadPings(), r.URL.Query().Get("range"))
-	if n := getNextPing(); !n.IsZero() {
-		st.NextPing = n.Format(time.RFC3339)
-	}
-	st.StartedAt = startedAt.Format(time.RFC3339)
-	st.Hours = hoursArg
-	st.InWindow = activeWindow.contains(time.Now())
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(st)
 }
 
 // ---------- 预检 ----------
@@ -440,9 +243,9 @@ func checkDeps() error {
 	return nil
 }
 
-// acquireLock 拿数据目录里的排他锁，保证同一时间只有一个采样器在跑。
-// 没有这道锁的话，手动跑一个 + systemd 再跑一个 = 双倍弹框、两边抢同一个
-// jsonl 写、还会撞端口（已经因此崩过 299 次）。锁随进程退出自动释放。
+// acquireLock 拿数据目录里的排他锁，保证同一时间只有一个在跑。
+// 没有这道锁的话，手动跑一个 + systemd 再跑一个 = 双倍弹框还撞端口
+// （已经因此崩过 299 次）。锁随进程退出自动释放。
 func acquireLock() (*os.File, error) {
 	f, err := os.OpenFile(filepath.Join(dataDir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -455,23 +258,23 @@ func acquireLock() (*os.File, error) {
 	return f, nil
 }
 
-const usage = `study_pinger —— 随机时点弹窗问「你现在在干嘛」，采样统计时间都花哪了
+const usage = `study_pinger —— 每半小时提醒你站起来动两分钟
 
 用法：
-  study_pinger           后台跑着，平均每 45 分钟弹一次
-  study_pinger -now      启动就先弹一次，用来试效果
-  study_pinger -mean 20  改成平均 20 分钟一次
+  study_pinger            后台跑着，每 30 分钟弹一次（对齐整点和半点）
+  study_pinger -now       启动就先弹一次，用来试效果
+  study_pinger -every 45  改成每 45 分钟一次
 
-统计页面：http://localhost:8085
+状态页面：http://localhost:8083
 
-数据：
-  默认 ~/.local/share/study_pinger，用 -data 或 PINGER_DATA_DIR 改
+不记录任何数据。老的采样数据 pings.jsonl 还在，只是不再写入。
+
 依赖：
   zenity（GNOME 自带的弹窗程序），没有就弹不出来
 环境变量：
-  PINGER_MEAN_MIN   平均间隔分钟数
-  PINGER_HOURS      活动时段，时段外不打扰（默认 09:00-23:00）
-  PINGER_IDLE_TAGS  哪些答案算「没在学」
+  PINGER_EVERY_MIN  间隔分钟数（默认 30）
+  PINGER_HOURS      活动时段，时段外不打扰（默认 06:00-23:30）
+  PINGER_DATA_DIR   放锁文件的目录
 
 参数：
 `
@@ -483,12 +286,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&dataDir, "data", "", "数据目录（默认 ~/.local/share/study_pinger，或 PINGER_DATA_DIR）")
-	flag.StringVar(&port, "port", defaultPort, "统计页面端口")
-	flag.Float64Var(&meanMin, "mean", 0, "平均采样间隔/分钟（默认 45，或 PINGER_MEAN_MIN）")
-	flag.StringVar(&hoursArg, "hours", "", "活动时段，时段外不打扰（默认 09:00-23:00，或 PINGER_HOURS）")
+	flag.StringVar(&port, "port", defaultPort, "状态页面端口")
+	flag.IntVar(&everyMin, "every", 0, "提醒间隔/分钟（默认 30，或 PINGER_EVERY_MIN）")
+	flag.StringVar(&hoursArg, "hours", "", "活动时段，时段外不打扰（默认 06:00-23:30，或 PINGER_HOURS）")
 	flag.BoolVar(&pingNow, "now", false, "启动时立刻弹一次（用来试效果）")
 	var lan bool
-	flag.BoolVar(&lan, "lan", false, "统计页面监听 0.0.0.0，同一个 Wi-Fi 下手机也能看（默认只有本机能开）")
+	flag.BoolVar(&lan, "lan", false, "状态页面监听 0.0.0.0，同一个 Wi-Fi 下手机也能看（默认只有本机能开）")
 	flag.Parse()
 
 	if dataDir == "" {
@@ -498,62 +301,51 @@ func main() {
 			dataDir = defaultDataDir
 		}
 	}
-	if meanMin == 0 {
-		meanMin = 45
-		if s := strings.TrimSpace(os.Getenv("PINGER_MEAN_MIN")); s != "" {
-			if v, err := strconv.ParseFloat(s, 64); err == nil && v > 0 {
-				meanMin = v
+	if everyMin == 0 {
+		everyMin = 30
+		if s := strings.TrimSpace(os.Getenv("PINGER_EVERY_MIN")); s != "" {
+			if v, err := strconv.Atoi(s); err == nil && v > 0 {
+				everyMin = v
 			}
 		}
 	}
 	if hoursArg == "" {
-		// 23:00 截止太早了——他 23:09 还在学，那个时段的采样会被白白跳过
-		hoursArg = "09:00-24:00"
+		hoursArg = "06:00-23:30"
 		if s := strings.TrimSpace(os.Getenv("PINGER_HOURS")); s != "" {
 			hoursArg = s
 		}
 	}
 
 	if err := checkDeps(); err != nil {
-		log.Fatalf("❌ %v", err)
+		log.Fatalf("%v", err)
 	}
 	w, err := parseHours(hoursArg)
 	if err != nil {
-		log.Fatalf("❌ %v", err)
+		log.Fatalf("%v", err)
 	}
 	activeWindow = w
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		log.Fatalf("❌ 建不了数据目录 %s: %v", dataDir, err)
+		log.Fatalf("建不了数据目录 %s: %v", dataDir, err)
 	}
 
 	// 已经有一个在跑就安静退出。注意是 exit 0 而不是失败——
 	// 退成失败会让 systemd 的 Restart=on-failure 一直重启，正是之前崩 299 次的成因。
 	lock, err := acquireLock()
 	if err != nil {
-		fmt.Println("⏭️ 已经有一个采样器在跑了，这个就不启动了")
-		fmt.Printf("   统计页面: http://localhost:%s\n", port)
+		fmt.Println("已经有一个在跑了，这个就不启动了")
+		fmt.Printf("   状态页面: http://localhost:%s\n", port)
 		return
 	}
 	defer lock.Close()
 
-	fmt.Println("⏱ 学习采样器已启动")
-	fmt.Printf("   平均间隔: %.0f 分钟（随机 %d~%d 分钟，无法预判）\n", meanMin, minGapMin, maxGapMin)
+	fmt.Println("起来动一下 提醒器已启动")
+	fmt.Printf("   间隔: 每 %d 分钟（对齐整点/半点）\n", everyMin)
 	fmt.Printf("   活动时段: %s\n", hoursArg)
-	fmt.Printf("   数据文件: %s\n", dataFile())
-	fmt.Printf("   统计页面: http://localhost:%s\n", port)
-	fmt.Println("   💡 弹框会预填上次的答案——还在干同一件事直接回车就行")
+	fmt.Printf("   状态页面: http://localhost:%s\n", port)
+	fmt.Println("   不记录任何数据")
 
 	if pingNow {
-		go func() {
-			answer, ok := ask(lastAnswer(loadPings()))
-			p := Ping{At: time.Now().Format(time.RFC3339), Answer: answer, Answered: ok, GapMin: int(meanMin)}
-			_ = appendPing(p)
-			if ok {
-				fmt.Printf("✅ %s  %s\n", time.Now().Format("15:04"), answer)
-			} else {
-				fmt.Println("⚠️ 未答")
-			}
-		}()
+		go notify()
 	}
 	go pingLoop(w)
 
@@ -561,21 +353,21 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexHTML)
 	}))
-	http.HandleFunc("/api/stats", cors(handleStats))
+	http.HandleFunc("/api/status", cors(handleStatus))
 
-	// 采样才是核心功能，web 只是拿来看数据的。端口起不来就只警告，
-	// 采样循环照跑——之前这里是 log.Fatalf，附属功能把主功能一起杀了。
+	// 提醒才是核心功能，web 只是拿来看死活的。端口起不来就只警告，
+	// 循环照跑——之前这里是 log.Fatalf，附属功能把主功能一起杀了。
 	listenHost := "127.0.0.1"
 	if lan {
 		listenHost = "0.0.0.0"
 	}
 	ln, err := net.Listen("tcp4", listenHost+":"+port)
 	if err != nil {
-		fmt.Printf("⚠️ 端口 %s 用不了（%v），统计页面开不了，但采样照常进行\n", port, err)
-		select {} // 守住采样 goroutine
+		fmt.Printf("端口 %s 用不了（%v），状态页面开不了，但提醒照常进行\n", port, err)
+		select {}
 	}
 	if err := http.Serve(ln, nil); err != nil {
-		fmt.Printf("⚠️ 统计页面挂了: %v；采样照常进行\n", err)
+		fmt.Printf("状态页面挂了: %v；提醒照常进行\n", err)
 		select {}
 	}
 }

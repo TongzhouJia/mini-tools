@@ -173,7 +173,7 @@ func defaultConfig(home string) Config {
 			{ID: "video_duration", Name: "视频时长统计", Desc: "填个目录，算总时长", Port: 8081,
 				Exec: bin("video_duration_calculator"),
 				Dir:  filepath.Join(mini, "cmd", "video_duration_calculator"), Auto: true, LAN: true},
-			{ID: "study_pinger", Name: "学习时间采样", Desc: "随机弹窗问你在干嘛，这页是统计", Port: 8083,
+			{ID: "study_pinger", Name: "起来动一下", Desc: "每半小时提醒站起来，这页看死活", Port: 8083,
 				Unit: "study_pinger.service", Auto: false, LAN: true},
 		},
 		Repos: []Repo{

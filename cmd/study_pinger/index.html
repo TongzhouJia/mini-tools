@@ -1,170 +1,73 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
+<!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>⏱ 时间都去哪了</title>
+<title>起来动一下</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  * { box-sizing: border-box; }
+  :root { color-scheme: light dark; }
   body {
-    margin: 0; padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
-    background: #14121a; color: #eee;
-    min-height: 100vh;
+    font: 16px/1.7 system-ui, "Noto Sans CJK SC", sans-serif;
+    max-width: 480px; margin: 8vh auto; padding: 0 20px;
   }
-  header {
-    position: sticky; top: 0; z-index: 10;
-    padding: 18px 16px 14px;
-    background: rgba(20,18,26,.92); backdrop-filter: blur(12px);
-    border-bottom: 1px solid #2a2733;
-  }
-  h1 { margin: 0 0 12px; font-size: 20px; font-weight: 600; }
-  .bar { display: flex; gap: 8px; }
-  button {
-    font: inherit; font-size: 14px; color: #eee;
-    background: #2a2733; border: none; border-radius: 10px;
-    padding: 8px 16px; cursor: pointer; transition: background .15s;
-  }
-  button.on { background: #6c4ee0; }
-  main { padding: 16px 16px 48px; max-width: 720px; margin: 0 auto; }
-
-  /* 间隔是随机的，等 70 分钟也可能是正常的——所以必须能一眼看到下次什么时候，
-     否则只能靠「等太久了」来猜程序死没死。 */
-  .status { margin-top: 10px; font-size: 12px; color: #8d86a0; }
-  .status b { color: #7ee0a8; font-weight: 500; }
-  .status.off b { color: #ffb4c4; }
-
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-  .card { background: #1d1a26; border-radius: 12px; padding: 14px 16px; }
-  .card .k { font-size: 12px; color: #8d86a0; margin-bottom: 6px; }
-  .card .v { font-size: 24px; font-weight: 600; }
-  .card .v small { font-size: 13px; font-weight: 400; color: #8d86a0; margin-left: 4px; }
-  .card.study .v { color: #7ee0a8; }
-  .card.idle .v { color: #ffb4c4; }
-  .card.switch .v { color: #f0c674; }
-
-  h2 { font-size: 15px; font-weight: 600; margin: 28px 0 12px; color: #b9a7ff; }
-  .hint { font-size: 12px; color: #8d86a0; line-height: 1.7; margin: 8px 0 0; }
-
-  .rows { display: flex; flex-direction: column; gap: 8px; }
-  .row { background: #1d1a26; border-radius: 10px; padding: 11px 14px; position: relative; overflow: hidden; }
-  .row .fill { position: absolute; inset: 0 auto 0 0; background: #2e2a3d; }
-  .row.idle .fill { background: #3a2430; }
-  .row .txt { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  .row .tag { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .num { font-size: 13px; color: #b5aec7; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-
-  ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; gap: 12px; padding: 9px 2px; border-bottom: 1px solid #221f2c; font-size: 14px; }
-  li .t { color: #8d86a0; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-  li .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  li.miss .a { color: #6a6478; font-style: italic; }
-
-  .empty { color: #8d86a0; font-size: 14px; line-height: 1.8; background: #1d1a26; border-radius: 12px; padding: 18px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .6; font-size: 14px; margin-bottom: 28px; }
+  .big { font-size: 46px; font-weight: 700; letter-spacing: -1px; margin: 6px 0; }
+  .row { display: flex; justify-content: space-between; padding: 9px 0;
+         border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent); }
+  .row span:last-child { opacity: .75; }
+  .off { color: #c0392b; }
+  .note { margin-top: 26px; font-size: 13px; opacity: .55; }
 </style>
-</head>
-<body>
-<header>
-  <h1>⏱ 时间都去哪了</h1>
-  <div class="bar">
-    <button id="btn-today" class="on" onclick="load('today')">今天</button>
-    <button id="btn-week" onclick="load('week')">最近 7 天</button>
-  </div>
-  <div id="status" class="status"></div>
-</header>
 
-<main>
-  <div id="body"></div>
-</main>
+<h1>起来动一下</h1>
+<div class="sub">每半小时提醒一次。不记录任何数据。</div>
+
+<div id="countdown" class="big">…</div>
+<div class="sub" id="nextAt"></div>
+
+<div class="row"><span>间隔</span><span id="every">—</span></div>
+<div class="row"><span>活动时段</span><span id="hours">—</span></div>
+<div class="row"><span>此刻在时段内</span><span id="inwin">—</span></div>
+<div class="row"><span>本次运行已提醒</span><span id="count">—</span></div>
+<div class="row"><span>启动于</span><span id="started">—</span></div>
+
+<div class="note">
+  为什么是 30 分钟：X 光查出 L5/S1 椎间盘间隙变窄，症状是坐着加重、走路缓解。
+  坐位的椎间盘内压比站着高四成左右，所以要打断的是「连续坐」，不是「学习」。
+</div>
 
 <script>
-let cur = 'today';
+let next = null;
+function hhmm(d) { return d.toTimeString().slice(0, 5); }
 
-function fmtMin(m) {
-  if (m < 60) return m + ' <small>分钟</small>';
-  const h = Math.floor(m / 60), r = m % 60;
-  return h + ' <small>小时</small> ' + r + ' <small>分</small>';
-}
-
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-}
-
-function renderStatus(st) {
-  const el = document.getElementById('status');
-  const hhmm = s => { const d = new Date(s); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
-  if (!st.next_ping) { el.className = 'status'; el.innerHTML = '⏱ 采样器运行中'; return; }
-  const mins = Math.max(0, Math.round((new Date(st.next_ping) - new Date()) / 60000));
-  if (!st.in_window) {
-    el.className = 'status off';
-    el.innerHTML = '💤 <b>不在活动时段</b>（' + esc(st.hours) + '），现在不会弹';
-    return;
-  }
-  el.className = 'status';
-  el.innerHTML = '⏱ 采样器运行中 · 下次约 <b>' + hhmm(st.next_ping) + '</b>（' + mins + ' 分钟后）· 间隔是随机的，15~70 分钟不等';
-}
-
-function render(st) {
-  renderStatus(st);
-  const body = document.getElementById('body');
-
-  if (st.answered === 0) {
-    body.innerHTML = '<div class="empty">还没有采样数据。<br>' +
-      '采样器跑起来后，平均每 45 分钟会弹一次框——答几次之后这里就有东西看了。<br><br>' +
-      '💡 想立刻试试效果，用 <code>-now</code> 启动。</div>';
-    return;
-  }
-
-  const total = st.study_minutes + st.idle_minutes;
-  const focus = total > 0 ? Math.round(st.study_minutes * 100 / total) : 0;
-  const maxMin = Math.max(...st.buckets.map(b => b.minutes), 1);
-
-  let h = '<div class="cards">' +
-    '<div class="card study"><div class="k">在学</div><div class="v">' + fmtMin(st.study_minutes) + '</div></div>' +
-    '<div class="card idle"><div class="k">没在学</div><div class="v">' + fmtMin(st.idle_minutes) + '</div></div>' +
-    '<div class="card"><div class="k">专注率</div><div class="v">' + focus + '<small>%</small></div></div>' +
-    '<div class="card switch"><div class="k">主题切换</div><div class="v">' + st.switches + '<small>次</small></div></div>' +
-    '</div>';
-
-  h += '<p class="hint">采样了 ' + st.total + ' 次，答了 ' + st.answered + ' 次。' +
-    (st.total > st.answered ? '未答的 ' + (st.total - st.answered) + ' 次多半是人不在电脑前。' : '') +
-    '<br>时长是把每次采样覆盖的间隔累加出来的估计值，样本越多越准。</p>';
-
-  h += '<h2>时间花在哪了</h2><div class="rows">';
-  for (const b of st.buckets) {
-    h += '<div class="row' + (b.idle ? ' idle' : '') + '">' +
-      '<div class="fill" style="width:' + (b.minutes * 100 / maxMin) + '%"></div>' +
-      '<div class="txt"><span class="tag">' + esc(b.tag) + '</span>' +
-      '<span class="num">' + fmtMin(b.minutes).replace(/<\/?small>/g, '') + ' · ' + b.count + '次</span></div></div>';
-  }
-  h += '</div>';
-
-  h += '<h2>原始记录</h2><ul>';
-  for (const p of st.recent) {
-    const t = new Date(p.at);
-    const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
-    h += '<li' + (p.answered ? '' : ' class="miss"') + '><span class="t">' + hh + '</span>' +
-      '<span class="a">' + (p.answered ? esc(p.answer) : '未答') + '</span></li>';
-  }
-  h += '</ul>';
-
-  body.innerHTML = h;
-}
-
-async function load(range) {
-  cur = range;
-  document.getElementById('btn-today').className = range === 'today' ? 'on' : '';
-  document.getElementById('btn-week').className = range === 'week' ? 'on' : '';
+async function load() {
   try {
-    const r = await fetch('/api/stats?range=' + range);
-    render(await r.json());
+    const s = await (await fetch('/api/status')).json();
+    next = s.next_ping ? new Date(s.next_ping) : null;
+    document.getElementById('every').textContent = s.every_min + ' 分钟';
+    document.getElementById('hours').textContent = s.hours;
+    const w = document.getElementById('inwin');
+    w.textContent = s.in_window ? '是' : '否（不打扰）';
+    w.className = s.in_window ? '' : 'off';
+    document.getElementById('count').textContent = s.count + ' 次';
+    document.getElementById('started').textContent = hhmm(new Date(s.started_at));
+    document.getElementById('nextAt').textContent =
+      next ? '下一次 ' + hhmm(next) : '';
   } catch (e) {
-    document.getElementById('body').innerHTML = '<div class="empty">❌ 连不上采样器，它还在跑吗？</div>';
+    document.getElementById('countdown').textContent = '连不上';
+    document.getElementById('nextAt').textContent = '提醒器没在跑？';
   }
 }
 
-load('today');
-setInterval(() => load(cur), 10000);
+function tick() {
+  if (!next) return;
+  const left = Math.max(0, Math.round((next - Date.now()) / 1000));
+  const m = String(Math.floor(left / 60)).padStart(2, '0');
+  const s = String(left % 60).padStart(2, '0');
+  document.getElementById('countdown').textContent = m + ':' + s;
+  if (left <= 0) load();
+}
+
+load();
+setInterval(tick, 1000);
+setInterval(load, 60000);
 </script>
-</body>
-</html>
