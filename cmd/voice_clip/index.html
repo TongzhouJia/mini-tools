@@ -98,6 +98,8 @@
   #msg.ok { color: var(--ok); }
   #msg.err { color: var(--err); }
 
+  .hint { margin: 8px 4px 0; font-size: 13px; color: var(--dim); }
+
   h2 {
     font-size: 13px; font-weight: 600; color: var(--dim);
     margin: 18px 4px 8px; text-transform: none;
@@ -147,8 +149,9 @@
 
 <div id="qr"></div>
 
-<textarea id="text" placeholder="点这里，用输入法的语音键说一段话，说完点下面的按钮" autocapitalize="sentences"></textarea>
+<textarea id="text" placeholder="点这里，用输入法的语音键说一段话，说完按回车" autocapitalize="sentences" enterkeyhint="send"></textarea>
 <button id="send">发送到电脑</button>
+<div class="hint">按回车直接发送（想打换行用 Shift+回车）</div>
 
 <div class="row">
   <label><input type="checkbox" id="auto"> 说完停 2 秒自动发送</label>
@@ -224,6 +227,17 @@ async function send() {
 }
 
 sendBtn.addEventListener('click', send);
+
+// 回车直接发送。Shift+回车留给换行。
+ta.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  // 拼音打字时按回车是「上屏选字」，不是发送，这里必须放过去。
+  // isComposing 是标准写法；keyCode 229 是部分安卓输入法的老式兼容值，两个都得看。
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.shiftKey) return;
+  e.preventDefault();
+  send();
+});
 
 // ---------- 自动发送 ----------
 autoBox.checked = localStorage.getItem('voiceclip_auto') === '1';
