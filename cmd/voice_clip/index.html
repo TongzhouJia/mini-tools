@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1f6feb">
+<title>语音进剪贴板</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --fg: #1a1c1f;
+    --dim: #6b7280;
+    --line: #e2e5ea;
+    --accent: #1f6feb;
+    --accent-fg: #ffffff;
+    --ok: #17803d;
+    --err: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --card: #22252b;
+      --fg: #e8eaed;
+      --dim: #9aa1ab;
+      --line: #343841;
+      --accent: #3b82f6;
+      --accent-fg: #ffffff;
+      --ok: #4ade80;
+      --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 system-ui, "Noto Sans CJK SC", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    margin: 2px 2px 10px;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; flex: 1; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; }
+  #dot.on { background: var(--ok); }
+  #dot.off { background: var(--err); }
+
+  textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    color: var(--fg);
+    font: 17px/1.6 inherit;
+    resize: vertical;
+    outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+
+  button {
+    font: inherit;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    color: var(--accent-fg);
+    background: var(--accent);
+  }
+  #send {
+    width: 100%;
+    margin-top: 10px;
+    padding: 16px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  #send:disabled { opacity: .5; }
+  #send:active { transform: scale(.99); }
+
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    margin: 12px 4px;
+    font-size: 14px; color: var(--dim);
+  }
+  .row label { display: flex; align-items: center; gap: 7px; }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+
+  #msg {
+    min-height: 20px;
+    margin: 4px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  #msg.ok { color: var(--ok); }
+  #msg.err { color: var(--err); }
+
+  h2 {
+    font-size: 13px; font-weight: 600; color: var(--dim);
+    margin: 18px 4px 8px; text-transform: none;
+  }
+  .item {
+    display: flex; align-items: flex-start; gap: 8px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .item .txt {
+    flex: 1; min-width: 0;
+    font-size: 15px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: pointer;
+  }
+  .item .meta { font-size: 12px; color: var(--dim); margin-top: 4px; }
+  .item .del {
+    flex: none; background: none; color: var(--dim);
+    font-size: 20px; line-height: 1; padding: 2px 6px;
+  }
+  #empty { color: var(--dim); font-size: 14px; margin: 4px; }
+
+  #qr {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  #qr img { width: 200px; height: 200px; border-radius: 6px; background: #fff; }
+  #qr p { margin: 10px 0 0; font-size: 14px; color: var(--dim); }
+  #qr code { font-size: 15px; color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <span id="dot"></span>
+  <h1>说话 → 电脑剪贴板</h1>
+</header>
+
+<div id="qr"></div>
+
+<textarea id="text" placeholder="点这里，用输入法的语音键说一段话，说完点下面的按钮" autocapitalize="sentences"></textarea>
+<button id="send">发送到电脑</button>
+
+<div class="row">
+  <label><input type="checkbox" id="auto"> 说完停 2 秒自动发送</label>
+</div>
+
+<div id="msg"></div>
+
+<h2>最近发过的（点一下重新放进电脑剪贴板）</h2>
+<div id="list"></div>
+<div id="empty">还没有记录</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const ta = $('#text'), sendBtn = $('#send'), msgEl = $('#msg'),
+      autoBox = $('#auto'), listEl = $('#list'), emptyEl = $('#empty'), dot = $('#dot');
+
+let sending = false, autoTimer = null, msgTimer = null;
+
+// ---------- 小工具 ----------
+function say(text, kind) {
+  msgEl.textContent = text;
+  msgEl.className = kind || '';
+  clearTimeout(msgTimer);
+  if (kind === 'ok') msgTimer = setTimeout(() => { msgEl.textContent = ''; }, 2500);
+}
+function buzz(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
+function when(sec) {
+  const d = new Date(sec * 1000), now = new Date();
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if (d.toDateString() === now.toDateString()) return hm;
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+}
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// ---------- 发送 ----------
+async function send() {
+  const text = ta.value.trim();
+  if (!text || sending) return;
+  clearTimeout(autoTimer);
+
+  sending = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '发送中…';
+  // 先清空，输入法不收起，可以马上接着说下一段；失败了再放回去
+  ta.value = '';
+
+  try {
+    await api('/api/send', { text });
+    say('已进电脑剪贴板，去按 Ctrl+V', 'ok');
+    buzz(30);
+    dot.className = 'on';
+    load();
+  } catch (e) {
+    ta.value = text;           // 别把用户说的话弄丢了
+    say('没发出去：' + e.message, 'err');
+    buzz([20, 60, 20]);
+    dot.className = 'off';
+  } finally {
+    sending = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = '发送到电脑';
+    ta.focus();
+  }
+}
+
+sendBtn.addEventListener('click', send);
+
+// ---------- 自动发送 ----------
+autoBox.checked = localStorage.getItem('voiceclip_auto') === '1';
+autoBox.addEventListener('change', () => {
+  localStorage.setItem('voiceclip_auto', autoBox.checked ? '1' : '0');
+  clearTimeout(autoTimer);
+  if (autoBox.checked) say('开了。说完停 2 秒就自己发', 'ok');
+});
+ta.addEventListener('input', () => {
+  clearTimeout(autoTimer);
+  if (autoBox.checked && ta.value.trim()) autoTimer = setTimeout(send, 2000);
+});
+
+// ---------- 历史 ----------
+async function load() {
+  try {
+    const r = await fetch('/api/items');
+    const j = await r.json();
+    dot.className = 'on';
+    render(j.items || []);
+  } catch (e) {
+    dot.className = 'off';
+  }
+}
+
+function render(list) {
+  emptyEl.style.display = list.length ? 'none' : 'block';
+  listEl.textContent = '';
+  for (const it of list.slice(0, 20)) {
+    const box = document.createElement('div');
+    box.className = 'item';
+
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    txt.textContent = it.text.length > 200 ? it.text.slice(0, 200) + '…' : it.text;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = when(it.created) + ' · ' + it.from;
+    txt.appendChild(meta);
+    txt.addEventListener('click', async () => {
+      try {
+        await api('/api/recopy', { id: it.id });
+        say('这条又放回电脑剪贴板了', 'ok');
+        buzz(30);
+      } catch (e) { say('放不回去：' + e.message, 'err'); }
+    });
+
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = '删掉这条';
+    del.addEventListener('click', async () => {
+      try { await api('/api/delete', { id: it.id }); load(); }
+      catch (e) { say('删不掉：' + e.message, 'err'); }
+    });
+
+    box.appendChild(txt);
+    box.appendChild(del);
+    listEl.appendChild(box);
+  }
+}
+
+// ---------- 电脑上打开时显示二维码 ----------
+async function maybeQR() {
+  const h = location.hostname;
+  if (h !== '127.0.0.1' && h !== 'localhost' && h !== '::1') return;
+  try {
+    const r = await fetch('/api/lan');
+    const j = await r.json();
+    if (!j.urls || !j.urls.length) return;
+    const box = $('#qr');
+    box.style.display = 'block';
+    const url = j.urls[0];
+    const img = document.createElement('img');
+    img.src = '/api/qr?size=400&data=' + encodeURIComponent(url);
+    img.alt = url;
+    const p = document.createElement('p');
+    p.textContent = '手机扫这个，或者直接开 ';
+    const code = document.createElement('code');
+    code.textContent = url;
+    p.appendChild(code);
+    box.appendChild(img);
+    box.appendChild(p);
+  } catch (e) {}
+}
+
+maybeQR();
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

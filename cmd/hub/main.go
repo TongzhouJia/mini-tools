@@ -161,6 +161,8 @@ func defaultConfig(home string) Config {
 				Dir:  filepath.Join(home, "go-projects", "lexica"), Auto: true, LAN: true},
 			{ID: "clip_bridge", Name: "互传中转站", Desc: "手机电脑传文件和文字，能一键发邮件", Port: 8088,
 				Exec: bin("clip_bridge"), Dir: home, Auto: true, LAN: true},
+			{ID: "voice_clip", Name: "手机语音进剪贴板", Desc: "手机上说一段话，文字直接进电脑剪贴板", Port: 8092,
+				Exec: bin("voice_clip"), Dir: home, Auto: true, LAN: true},
 			{ID: "jp_reader", Name: "日语点读笔", Desc: "粘日语、划段、点一下就念", Port: 8086,
 				Exec: bin("jp_reader") + " -lan", Dir: mini, Auto: true, LAN: true},
 			{ID: "en_drill", Name: "英语单词自测", Desc: "拿 In Our Time 的原声当提示", Port: 8087,
