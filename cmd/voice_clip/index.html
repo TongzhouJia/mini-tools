@@ -38,8 +38,8 @@
   }
 
   textarea {
-    flex: 1; width: 100%;
-    margin: 8px 0 0; padding: 14px;
+    flex: none; width: 100%; height: 40dvh;
+    margin: 8px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
     border: none; background: none; color: var(--fg);
     font: 18px/1.65 inherit;
     resize: none; outline: none;
@@ -48,7 +48,7 @@
 
   .btns {
     flex: none; display: flex; gap: 8px;
-    padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+    padding: 8px 10px 0;
   }
   .btns button {
     flex: 1; padding: 18px 0;
@@ -59,6 +59,8 @@
   .btns button:disabled { opacity: .5; }
   #send { background: var(--blue); }
   #task { background: var(--green); }
+
+  .filler { flex: 1; }
 
   #msg {
     position: fixed; left: 50%; top: 12px; transform: translate(-50%, -160%);
@@ -87,6 +89,7 @@
   <button id="send">发送到电脑</button>
   <button id="task">提醒事项</button>
 </div>
+<div class="filler"></div>
 <div id="msg"></div>
 
 <script>
