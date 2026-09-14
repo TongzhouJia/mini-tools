@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +43,10 @@ type Item struct {
 
 const maxItems = 200 // 历史只留这么多条，够回头找就行
 
+// defaultTaskList 是右上角「+」默认写进哪个 Google Tasks 列表。
+// 前端选过别的会记在 localStorage 里，以那个为准。
+var defaultTaskList = "My Tasks"
+
 var (
 	dataDir string
 	mu      sync.Mutex
@@ -57,10 +62,12 @@ func main() {
 	dir := flag.String("data", defaultData, "数据目录（历史记录存这里）")
 	local := flag.Bool("local", false, "只监听 127.0.0.1（手机就连不上了，仅本机自用时才加）")
 	noNotify := flag.Bool("no-notify", false, "收到文字后不弹桌面通知")
+	taskList := flag.String("task-list", defaultTaskList, "右上角「+」默认写进哪个 Google Tasks 列表")
 	flag.Usage = usage
 	flag.Parse()
 
 	dataDir = *dir
+	defaultTaskList = *taskList
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("建不了数据目录 %s：%v", dataDir, err)
 	}
@@ -84,6 +91,8 @@ func main() {
 	mux.HandleFunc("/api/send", handleSend(notifyOn))
 	mux.HandleFunc("/api/recopy", handleRecopy(notifyOn))
 	mux.HandleFunc("/api/delete", handleDelete)
+	mux.HandleFunc("/api/lists", handleLists)
+	mux.HandleFunc("/api/task", handleTask)
 	mux.HandleFunc("/api/lan", handleLAN(*port))
 	mux.HandleFunc("/api/qr", handleQR)
 
@@ -127,6 +136,7 @@ func usage() {
   voice_clip -port 9000     换端口
   voice_clip -local         只给本机用（手机连不上）
   voice_clip -no-notify     收到文字后不弹桌面通知
+  voice_clip -task-list X   「+」默认写进哪个 Google Tasks 列表
 
   电脑上打开 http://127.0.0.1:8092 会显示二维码，手机扫一下就进同一个页面。
   手机上建议用浏览器的「添加到主屏幕」做成图标，以后一点就开。
@@ -136,6 +146,9 @@ func usage() {
   - 按回车直接发送，不用点按钮。想在文字里打换行用 Shift+回车。
     （拼音组字中按回车是上屏，那下不会误发，isComposing 和 keyCode 229 都拦了。）
   - 「说完停 2 秒自动发送」开关（默认关）。开了以后连回车都省了。
+  - 右上角「+」：把输入框里的话建成一个 Google 任务（外调 gtasks）。
+    紧挨着它左边是列表选择器，选过一次就记住（存在浏览器 localStorage 里）。
+    默认写进哪个列表用 -task-list 改，当前默认是 My Tasks。
   - 最近的历史记录。点任意一条 = 把它重新放回电脑剪贴板（剪贴板被别的东西盖掉时用）。
 
 产物落哪:
@@ -145,6 +158,9 @@ func usage() {
 依赖什么:
   wl-copy（wl-clipboard 包）    写 Wayland 剪贴板，必需
   notify-send（libnotify-bin）  弹桌面通知，可选，没有就自动跳过
+  gtasks                        建 Google 任务用，只有点「+」时才需要。
+                                装在 ~/.local/bin，systemd 的 PATH 不含这个目录，
+                                所以代码里做了回落，别指望 LookPath 能找到。
 
 坑:
   - 剪贴板会被覆盖。每发一段就盖掉你当前复制的东西，发之前先把手头要粘的粘完。
@@ -237,6 +253,72 @@ func newID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// ---------- Google Tasks ----------
+
+// findBin 找外部命令。systemd 用户单元的 PATH 不含 ~/.local/bin，
+// 而 gtasks 就装在那儿，所以 LookPath 失败要回落去那里找一遍。
+func findBin(name string) (string, error) {
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	p := filepath.Join(os.Getenv("HOME"), ".local", "bin", name)
+	if _, err := os.Stat(p); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("找不到 %s", name)
+}
+
+// listLineRe 解析 `gtasks lists` 的输出，形如：📋 单词积累  (YWdwNHpqcVdHM2J5VV9aQQ)
+var listLineRe = regexp.MustCompile(`^\x{1F4CB}\s+(.*?)\s+\(([^()]+)\)\s*$`)
+
+func taskLists() ([]string, error) {
+	bin, err := findBin("gtasks")
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "lists").Output()
+	if err != nil {
+		return nil, fmt.Errorf("gtasks lists 失败：%v", err)
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if m := listLineRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			names = append(names, m[1])
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("一个列表都没解析出来")
+	}
+	return names, nil
+}
+
+func addTask(title, list string) error {
+	bin, err := findBin("gtasks")
+	if err != nil {
+		return err
+	}
+	args := []string{"add"}
+	if list != "" {
+		args = append(args, "--list", list)
+	}
+	args = append(args, title)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("建任务失败：%s", firstLine(msg, 80))
+	}
+	return nil
 }
 
 // ---------- 剪贴板 ----------
@@ -530,6 +612,43 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "删是删了，但存不下："+err.Error())
 		return
 	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func handleLists(w http.ResponseWriter, r *http.Request) {
+	names, err := taskLists()
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"lists": names, "default": defaultTaskList})
+}
+
+func handleTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, 405, "只收 POST")
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+		List string `json:"list"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "请求读不懂："+err.Error())
+		return
+	}
+	title := strings.TrimSpace(req.Text)
+	if title == "" {
+		fail(w, 400, "没有内容")
+		return
+	}
+	// Google Tasks 的标题是单行的，语音里的换行换成空格
+	title = strings.Join(strings.Fields(title), " ")
+	if err := addTask(title, req.List); err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	log.Printf("建任务到「%s」：%s", req.List, firstLine(title, 30))
 	writeJSON(w, map[string]any{"ok": true})
 }
 

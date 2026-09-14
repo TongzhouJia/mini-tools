@@ -122,7 +122,7 @@ func usage() {
 怎么调:
   hub                起页面，默认 :8090，监听 0.0.0.0（手机也能开）
   hub -install       给配置里 auto=true 的服务装 systemd 用户单元 + 开机自启 + 立刻启动
-  hub -uninstall     撤掉 hub 装过的单元（不动 study_pinger 这种你自己装的）
+  hub -uninstall     撤掉 hub 装过的单元（不动你自己手装的那些）
   hub -status        终端里列一下谁活着
   hub -port 9000     换端口
   hub -local         只监听本机
@@ -142,7 +142,6 @@ func usage() {
     lan=true 的服务（监听 0.0.0.0 的）手机才连得上，别的会灰掉并注明。
   - 一个服务如果已经在外面手动跑着，systemd 再启一份会因为端口被占而失败。
     先把手动那份关掉，或者直接用页面上的「重启」按钮交给 systemd 管。
-  - study_pinger 早就有自己的单元，配置里 auto=false，hub 不碰它，只显示状态。
 
 `)
 }
@@ -177,8 +176,6 @@ func defaultConfig(home string) Config {
 				Dir:  filepath.Join(mini, "cmd", "video_duration_calculator"), Auto: true, LAN: true},
 			{ID: "audio_recorder", Name: "录声音转文字", Desc: "录电脑正在放的声音，录完自动出文字稿", Port: 8091,
 				Exec: bin("audio_recorder") + " -lan", Dir: mini, Auto: true, LAN: true},
-			{ID: "study_pinger", Name: "起来动一下", Desc: "每半小时提醒站起来，这页看死活", Port: 8083,
-				Unit: "study_pinger.service", Auto: false, LAN: true},
 		},
 		Repos: []Repo{
 			{Name: "mini-tools", Path: filepath.Join(home, "go-projects", "mini-tools"), Desc: "所有小工具的仓库"},

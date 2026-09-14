@@ -76,6 +76,27 @@
   #dot.on  { background: var(--ok);  box-shadow: 0 0 0 3px var(--ok-bg); }
   #dot.off { background: var(--err); box-shadow: 0 0 0 3px var(--err-bg); }
 
+  /* 列表选择器 + 加号，都在右上角 */
+  #taskList {
+    flex: none; max-width: 42vw;
+    font: 13px/1 inherit; color: var(--dim);
+    background: var(--card);
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 7px 8px; outline: none;
+  }
+  #taskList:focus { border-color: var(--accent); }
+  #plus {
+    flex: none;
+    width: 34px; height: 34px;
+    font-size: 21px; line-height: 1; font-weight: 400;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow);
+    transition: transform .12s, background .2s, opacity .2s;
+  }
+  #plus:active:not(:disabled) { transform: scale(.92); }
+  #plus:disabled { opacity: .5; }
+  #plus.done { background: var(--ok); }
+
   /* ---------- 输入区 ---------- */
   .composer {
     background: var(--card);
@@ -221,13 +242,15 @@
 <header>
   <span id="dot"></span>
   <h1>说话 → 电脑剪贴板</h1>
+  <select id="taskList" title="新任务写进哪个列表"></select>
+  <button id="plus" title="把输入框里的话建成一个 Google 任务">+</button>
 </header>
 
 <div id="qr"></div>
 
 <div class="composer">
-  <textarea id="text" placeholder="点这里，用输入法的语音键说一段话，说完按回车"
-            autocapitalize="sentences" enterkeyhint="send"></textarea>
+  <textarea id="text" placeholder="说一段话。回车发到电脑剪贴板，右上角加号存成任务"
+            autocapitalize="sentences" enterkeyhint="send" autofocus></textarea>
   <div class="composer-foot">
     <span id="count"></span>
     <button id="send">发送到电脑</button>
@@ -335,6 +358,63 @@ ta.addEventListener('keydown', e => {
   send();
 });
 
+// ---------- 右上角的「+」：把输入框的话建成 Google 任务 ----------
+const listSel = $('#taskList'), plusBtn = $('#plus');
+let plusTimer = null;
+
+async function loadLists() {
+  try {
+    const r = await fetch('/api/lists');
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '拿不到列表');
+    const saved = localStorage.getItem('voiceclip_list');
+    listSel.textContent = '';
+    for (const name of j.lists) {
+      const o = document.createElement('option');
+      o.value = o.textContent = name;
+      listSel.appendChild(o);
+    }
+    // 上次选的优先，没有就用服务端给的默认
+    const want = j.lists.includes(saved) ? saved : j.default;
+    if (j.lists.includes(want)) listSel.value = want;
+  } catch (e) {
+    listSel.innerHTML = '<option>列表没加载出来</option>';
+    listSel.disabled = plusBtn.disabled = true;
+  }
+}
+
+listSel.addEventListener('change',
+  () => localStorage.setItem('voiceclip_list', listSel.value));
+
+plusBtn.addEventListener('click', async () => {
+  const text = ta.value.trim();
+  if (!text) { say('先说点什么，再点加号', 'err'); ta.focus(); return; }
+
+  plusBtn.disabled = true;
+  ta.value = '';
+  updateCount();
+  try {
+    await api('/api/task', { text, list: listSel.value });
+    say('已建任务到「' + listSel.value + '」', 'ok');
+    buzz(30);
+    plusBtn.classList.add('done');
+    plusBtn.textContent = '✓';
+    clearTimeout(plusTimer);
+    plusTimer = setTimeout(() => {
+      plusBtn.classList.remove('done');
+      plusBtn.textContent = '+';
+    }, 1200);
+  } catch (e) {
+    ta.value = text;          // 别把说的话弄丢
+    updateCount();
+    say('建不了任务：' + e.message, 'err');
+    buzz([20, 60, 20]);
+  } finally {
+    plusBtn.disabled = false;
+    ta.focus();
+  }
+});
+
 // ---------- 自动发送 ----------
 autoBox.checked = localStorage.getItem('voiceclip_auto') === '1';
 autoBox.addEventListener('change', () => {
@@ -422,7 +502,19 @@ async function maybeQR() {
   } catch (e) {}
 }
 
+// ---------- 一进页面就准备好说话 ----------
+// 直接 focus 只在部分浏览器（尤其「添加到主屏幕」后的独立窗口）能把软键盘顶出来，
+// 移动端普遍要求先有用户手势。所以再兜一层：碰屏幕上任何空白处都聚焦到输入框，
+// 不用精确点那个框。
+ta.focus();
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('button, select, input, .item, a')) return;
+  if (e.target === ta) return;
+  ta.focus();
+});
+
 maybeQR();
+loadLists();
 load();
 setInterval(load, 5000);
 </script>
