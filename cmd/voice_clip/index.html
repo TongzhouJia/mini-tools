@@ -322,8 +322,8 @@ async function send() {
   updateCount();
 
   try {
-    await api('/api/send', { text });
-    say('已进电脑剪贴板，去按 Ctrl+V', 'ok');
+    const res = await api('/api/send', { text });
+    say(res.locked ? '电脑锁屏中，解锁后自动进剪贴板' : '已进电脑剪贴板，去按 Ctrl+V', 'ok');
     buzz(30);
     dot.className = 'on';
     sendBtn.classList.add('done');

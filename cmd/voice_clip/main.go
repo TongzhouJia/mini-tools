@@ -85,6 +85,8 @@ func main() {
 
 	notifyOn := !*noNotify
 
+	go watchUnlock(notifyOn)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/items", handleList)
@@ -321,6 +323,68 @@ func addTask(title, list string) error {
 	return nil
 }
 
+// ---------- 锁屏暂存 ----------
+//
+// Wayland 写剪贴板需要一个有效的输入焦点 serial，锁屏之后普通程序拿不到，
+// set_selection 会被 compositor 静默拒绝，wl-copy 就一直卡着直到超时。
+// 而「人在手机上说话、电脑没人动」恰恰是这个工具最常见的场景，电脑必然锁屏。
+// 所以锁屏时不去碰剪贴板，先把话存下来，等解锁了自动补写进去。
+
+var (
+	pendingMu   sync.Mutex
+	pendingText string
+)
+
+func setPending(s string) {
+	pendingMu.Lock()
+	pendingText = s
+	pendingMu.Unlock()
+}
+
+// screenLocked 问 GNOME 屏幕锁没锁。问不出来就当没锁，照常去试 wl-copy。
+func screenLocked() bool {
+	bin, err := exec.LookPath("gdbus")
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "call", "--session",
+		"-d", "org.gnome.ScreenSaver", "-o", "/org/gnome/ScreenSaver",
+		"-m", "org.gnome.ScreenSaver.GetActive")
+	cmd.Env = sessionEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "true")
+}
+
+// watchUnlock 盯着锁屏状态，一解锁就把暂存的话补进剪贴板。
+func watchUnlock(notifyOn bool) {
+	for range time.Tick(2 * time.Second) {
+		pendingMu.Lock()
+		text := pendingText
+		pendingMu.Unlock()
+		if text == "" || screenLocked() {
+			continue
+		}
+		if err := copyToClipboard(text); err != nil {
+			log.Printf("解锁后补写剪贴板还是失败：%v", err)
+			continue
+		}
+		pendingMu.Lock()
+		if pendingText == text {
+			pendingText = ""
+		}
+		pendingMu.Unlock()
+		if notifyOn {
+			notify(text)
+		}
+		log.Printf("解锁了，把暂存的 %d 字放进剪贴板", len([]rune(text)))
+	}
+}
+
 // ---------- 剪贴板 ----------
 
 // waylandDisplay 在环境变量缺失时，从 XDG_RUNTIME_DIR 里猜一个 socket 出来。
@@ -533,8 +597,11 @@ func handleSend(notifyOn bool) http.HandlerFunc {
 			return
 		}
 
-		// 先写剪贴板再记账：写不进去就别假装成功了
-		if err := copyToClipboard(text); err != nil {
+		locked := screenLocked()
+		if locked {
+			// 锁屏时碰 wl-copy 只会白卡 20 秒，先存着，解锁了自动补
+			setPending(text)
+		} else if err := copyToClipboard(text); err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
@@ -543,11 +610,15 @@ func handleSend(notifyOn bool) http.HandlerFunc {
 		if err := addItem(it); err != nil {
 			log.Printf("历史存不下：%v", err) // 剪贴板已经成了，不算失败
 		}
-		if notifyOn {
-			notify(text)
+		if locked {
+			log.Printf("电脑锁屏，先存着 %d 字：%s", len([]rune(text)), firstLine(text, 30))
+		} else {
+			if notifyOn {
+				notify(text)
+			}
+			log.Printf("收到 %d 字：%s", len([]rune(text)), firstLine(text, 30))
 		}
-		log.Printf("收到 %d 字：%s", len([]rune(text)), firstLine(text, 30))
-		writeJSON(w, map[string]any{"ok": true, "item": it})
+		writeJSON(w, map[string]any{"ok": true, "item": it, "locked": locked})
 	}
 }
 
