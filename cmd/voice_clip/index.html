@@ -3,201 +3,523 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#2563eb">
 <title>语音进剪贴板</title>
 <style>
   :root {
-    --bg: #ffffff; --fg: #16181d; --line: #e5e7eb; --faint: #9ca3af;
-    --blue: #2563eb; --green: #15803d;
-    --ok-bg: #dcfce7; --ok: #15803d; --err-bg: #fee2e2; --err: #b91c1c;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #16181d;
+    --dim: #6b7280;
+    --faint: #9ca3af;
+    --line: #e5e7eb;
+    --line-soft: #eef0f3;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, .12);
+    --accent-fg: #ffffff;
+    --ok: #15803d;
+    --ok-bg: #dcfce7;
+    --green: #15803d;
+    --err: #b91c1c;
+    --err-bg: #fee2e2;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+    --shadow-lift: 0 4px 12px rgba(16, 24, 40, .10);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16181c; --fg: #e8eaed; --line: #2c3037; --faint: #6b7280;
-      --blue: #3b6fd4; --green: #2f7d4f;
-      --ok-bg: rgba(74,222,128,.15); --ok: #4ade80;
-      --err-bg: rgba(248,113,113,.15); --err: #f87171;
+      --bg: #121417;
+      --card: #1c1f24;
+      --fg: #e8eaed;
+      --dim: #9aa1ab;
+      --faint: #6b7280;
+      --line: #2c3037;
+      --line-soft: #24272d;
+      --accent: #4d8ef7;
+      --accent-soft: rgba(77, 142, 247, .16);
+      --accent-fg: #0b1220;
+      --ok: #4ade80;
+      --ok-bg: rgba(74, 222, 128, .14);
+      --green: #2f7d4f;
+      --err: #f87171;
+      --err-bg: rgba(248, 113, 113, .14);
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+      --shadow-lift: 0 4px 14px rgba(0, 0, 0, .4);
     }
   }
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
+
   body {
-    margin: 0; display: flex; flex-direction: column;
-    height: 100dvh;
-    background: var(--bg); color: var(--fg);
-    font: 16px/1.5 system-ui, "Noto Sans CJK SC", sans-serif;
+    margin: 0 auto;
+    max-width: 620px;
+    padding: 14px 14px calc(20px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 system-ui, -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
+  /* ---------- 顶栏 ---------- */
+  header {
+    display: flex; align-items: center; gap: 9px;
+    padding: 2px 2px 14px;
+  }
+  h1 {
+    font-size: 16px; font-weight: 600; margin: 0; flex: 1;
+    letter-spacing: .01em;
+  }
+  #dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--faint); flex: none;
+    transition: background .25s, box-shadow .25s;
+  }
+  #dot.on  { background: var(--ok);  box-shadow: 0 0 0 3px var(--ok-bg); }
+  #dot.off { background: var(--err); box-shadow: 0 0 0 3px var(--err-bg); }
+
+  /* 列表选择器 + 加号，都在右上角 */
   #taskList {
-    flex: none; margin: 8px 10px 0;
-    font: 14px/1 inherit;
-    background: var(--bg); color: var(--fg);
-    border: 1px solid var(--line); border-radius: 8px;
-    padding: 9px 8px; outline: none;
+    flex: none; max-width: 42vw;
+    font: 13px/1 inherit; color: var(--dim);
+    background: var(--card);
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 7px 8px; outline: none;
   }
+  #taskList:focus { border-color: var(--accent); }
 
+
+  /* ---------- 输入区 ---------- */
+  .composer {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 6px 6px 10px;
+    box-shadow: var(--shadow);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .composer:focus-within {
+    border-color: var(--accent);
+    box-shadow: var(--shadow), 0 0 0 3px var(--accent-soft);
+  }
   textarea {
-    flex: 1; width: 100%;
-    margin: 8px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+    display: block; width: 100%;
+    min-height: 148px;
+    padding: 12px;
     border: none; background: none; color: var(--fg);
-    font: 18px/1.65 inherit;
-    resize: none; outline: none;
+    font: 17px/1.65 inherit;
+    resize: vertical; outline: none;
   }
   textarea::placeholder { color: var(--faint); }
 
-  .btns {
-    position: fixed; left: 10px; right: 10px;
-    top: 50%; transform: translateY(-50%);
-    display: flex; gap: 8px; z-index: 10;
+  .composer-foot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 8px;
   }
-  .btns button {
-    flex: 1; padding: 18px 0;
-    font: 600 17px/1 inherit; color: #fff;
-    border: none; border-radius: 12px; cursor: pointer;
-  }
-  .btns button:active { opacity: .8; }
-  .btns button:disabled { opacity: .5; }
-  #send { background: var(--blue); }
-  #task { background: var(--green); }
+  #count { font-size: 12px; color: var(--faint); flex: 1; font-variant-numeric: tabular-nums; }
 
+  button {
+    font: inherit; border: none; cursor: pointer;
+    color: var(--accent-fg); background: var(--accent);
+    border-radius: 11px;
+  }
+  #send {
+    padding: 11px 22px;
+    font-size: 15px; font-weight: 600;
+    box-shadow: var(--shadow);
+    transition: transform .12s, opacity .2s, background .2s;
+  }
+  #send:active:not(:disabled) { transform: scale(.96); }
+  #send:disabled { opacity: .55; cursor: default; }
+  #send.done { background: var(--ok); }
+
+  #task {
+    padding: 11px 18px;
+    font-size: 15px; font-weight: 600;
+    background: var(--green);
+    box-shadow: var(--shadow);
+    transition: transform .12s, opacity .2s, background .2s;
+  }
+  #task:active:not(:disabled) { transform: scale(.96); }
+  #task:disabled { opacity: .55; cursor: default; }
+  #task.done { background: var(--ok); }
+
+  .hint {
+    margin: 11px 6px 0;
+    font-size: 13px; color: var(--dim);
+  }
+  .hint kbd {
+    font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--line-soft); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 5px; color: var(--fg);
+  }
+
+  .row {
+    display: flex; align-items: center;
+    margin: 13px 6px 0;
+    font-size: 14px; color: var(--dim);
+  }
+  .row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); margin: 0; }
+
+  /* ---------- 提示条 ---------- */
   #msg {
-    position: fixed; left: 50%; top: 12px; transform: translate(-50%, -160%);
-    max-width: calc(100vw - 24px);
-    padding: 10px 18px; border-radius: 999px;
+    position: fixed; left: 50%; top: 14px;
+    transform: translate(-50%, -160%);
+    max-width: calc(100vw - 32px);
+    padding: 10px 18px;
+    border-radius: 999px;
     font-size: 14px; font-weight: 500;
-    opacity: 0; pointer-events: none; transition: transform .25s, opacity .25s;
+    box-shadow: var(--shadow-lift);
+    opacity: 0; pointer-events: none;
+    transition: transform .3s cubic-bezier(.2, .9, .3, 1), opacity .3s;
     z-index: 20;
   }
   #msg.show { transform: translate(-50%, 0); opacity: 1; }
   #msg.ok  { background: var(--ok-bg);  color: var(--ok); }
   #msg.err { background: var(--err-bg); color: var(--err); }
 
-  /* 只有在电脑上打开才显示，给手机扫 */
-  #qr { display: none; text-align: center; padding: 16px; }
-  #qr img { width: 200px; height: 200px; background: #fff; padding: 8px; border-radius: 8px; }
-  #qr div { margin-top: 8px; font-size: 14px; color: var(--faint); }
+  /* ---------- 历史 ---------- */
+  h2 {
+    font-size: 12px; font-weight: 600; color: var(--faint);
+    margin: 26px 6px 10px;
+    letter-spacing: .04em;
+  }
+  .item {
+    display: flex; align-items: flex-start; gap: 6px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    margin-bottom: 8px;
+    box-shadow: var(--shadow);
+    transition: border-color .18s, transform .12s;
+  }
+  .item:active { transform: scale(.99); }
+  .item .txt {
+    flex: 1; min-width: 0;
+    padding: 12px 4px 12px 14px;
+    font-size: 15px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    cursor: pointer;
+  }
+  .item .meta {
+    display: block; margin-top: 6px;
+    font-size: 12px; color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .item .del {
+    flex: none; align-self: stretch;
+    background: none; color: var(--faint);
+    font-size: 17px; line-height: 1;
+    padding: 0 14px; border-radius: 0 13px 13px 0;
+    transition: color .18s, background .18s;
+  }
+  .item .del:hover { color: var(--err); background: var(--err-bg); }
+  #empty { color: var(--faint); font-size: 14px; margin: 2px 6px; }
+
+  /* ---------- 二维码（只在电脑上出现） ---------- */
+  #qr {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+  #qr img {
+    width: 190px; height: 190px;
+    border-radius: 10px; background: #fff; padding: 8px;
+  }
+  #qr p { margin: 12px 0 0; font-size: 13px; color: var(--dim); }
+  #qr code {
+    display: inline-block; margin-top: 4px;
+    font: 500 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent);
+  }
 </style>
 </head>
 <body>
 
+<header>
+  <span id="dot"></span>
+  <h1>说话 → 电脑剪贴板</h1>
+  <select id="taskList" title="新任务写进哪个列表"></select>
+</header>
+
 <div id="qr"></div>
-<select id="taskList" title="提醒事项写进哪个列表"></select>
-<textarea id="text" placeholder="说一段话" enterkeyhint="send" autofocus></textarea>
-<div class="btns">
-  <button id="task">提醒事项</button>
-  <button id="send">发送到电脑</button>
+
+<div class="composer">
+  <textarea id="text" placeholder="说一段话。回车发到电脑剪贴板，右上角加号存成任务"
+            autocapitalize="sentences" enterkeyhint="send" autofocus></textarea>
+  <div class="composer-foot">
+    <span id="count"></span>
+    <button id="task">提醒事项</button>
+    <button id="send">发送到电脑</button>
+  </div>
 </div>
+
+<div class="hint">按 <kbd>回车</kbd> 直接发送，<kbd>Shift</kbd>+<kbd>回车</kbd> 换行</div>
+
+<div class="row">
+  <label><input type="checkbox" id="auto"> 说完停 2 秒自动发送</label>
+</div>
+
 <div id="msg"></div>
+
+<h2>最近发过的 · 点一下重新放进剪贴板</h2>
+<div id="list"></div>
+<div id="empty">还没有记录</div>
 
 <script>
 const $ = s => document.querySelector(s);
-const ta = $('#text'), sendBtn = $('#send'), taskBtn = $('#task'),
-      listSel = $('#taskList'), msgEl = $('#msg');
-let busy = false, msgTimer = null;
+const ta = $('#text'), sendBtn = $('#send'), msgEl = $('#msg'), countEl = $('#count'),
+      autoBox = $('#auto'), listEl = $('#list'), emptyEl = $('#empty'), dot = $('#dot');
 
+let sending = false, autoTimer = null, msgTimer = null, doneTimer = null;
+
+// ---------- 小工具 ----------
 function say(text, kind) {
   msgEl.textContent = text;
-  msgEl.className = kind + ' show';
+  msgEl.className = (kind || '') + ' show';
   clearTimeout(msgTimer);
-  msgTimer = setTimeout(() => { msgEl.className = kind; }, kind === 'err' ? 4000 : 2000);
+  msgTimer = setTimeout(() => { msgEl.className = kind || ''; }, kind === 'err' ? 4000 : 2200);
 }
 function buzz(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
-
-async function post(path, body) {
+function when(sec) {
+  const d = new Date(sec * 1000), now = new Date();
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if (d.toDateString() === now.toDateString()) return hm;
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+}
+function updateCount() {
+  const n = ta.value.trim().length;
+  countEl.textContent = n ? n + ' 字' : '';
+}
+async function api(path, body) {
   const r = await fetch(path, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
   return j;
 }
 
-// 两个按钮走同一条路：先清空输入框，失败了再把话放回来
-async function submit(kind) {
+// ---------- 发送 ----------
+async function send() {
   const text = ta.value.trim();
-  if (!text || busy) return;
-  busy = true;
-  sendBtn.disabled = taskBtn.disabled = true;
+  if (!text || sending) return;
+  clearTimeout(autoTimer);
+
+  sending = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '发送中';
+  // 先清空，输入法不收起，可以马上接着说下一段；失败了再放回去
   ta.value = '';
+  updateCount();
+
   try {
-    if (kind === 'clip') {
-      await post('/api/send', { text });
-      say('已进电脑剪贴板', 'ok');
-    } else {
-      await post('/api/task', { text, list: listSel.value });
-      say('已存进「' + listSel.value + '」', 'ok');
-    }
+    await api('/api/send', { text });
+    say('已进电脑剪贴板，去按 Ctrl+V', 'ok');
     buzz(30);
+    dot.className = 'on';
+    sendBtn.classList.add('done');
+    sendBtn.textContent = '已发送';
+    clearTimeout(doneTimer);
+    doneTimer = setTimeout(() => {
+      sendBtn.classList.remove('done');
+      sendBtn.textContent = '发送到电脑';
+    }, 1200);
+    load();
   } catch (e) {
-    ta.value = text;
-    say(e.message, 'err');
+    ta.value = text;           // 别把用户说的话弄丢了
+    updateCount();
+    say('没发出去：' + e.message, 'err');
     buzz([20, 60, 20]);
+    dot.className = 'off';
+    sendBtn.textContent = '发送到电脑';
   } finally {
-    busy = false;
-    sendBtn.disabled = taskBtn.disabled = false;
+    sending = false;
+    sendBtn.disabled = false;
     ta.focus();
   }
 }
 
-sendBtn.addEventListener('click', () => submit('clip'));
-taskBtn.addEventListener('click', () => submit('task'));
+sendBtn.addEventListener('click', send);
 
-// 回车发到电脑；拼音组字中的回车是上屏，要放过去
+// 回车直接发送。Shift+回车留给换行。
 ta.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
-  if (e.isComposing || e.keyCode === 229 || e.shiftKey) return;
+  // 拼音打字时按回车是「上屏选字」，不是发送，这里必须放过去。
+  // isComposing 是标准写法；keyCode 229 是部分安卓输入法的老式兼容值，两个都得看。
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.shiftKey) return;
   e.preventDefault();
-  submit('clip');
+  send();
 });
 
-// 点页面任何地方都聚焦到输入框（手机不点就不弹键盘）
-document.addEventListener('pointerdown', e => {
-  if (e.target.closest('button, select')) return;
-  if (e.target !== ta) ta.focus();
-});
+// ---------- 右上角的「+」：把输入框的话建成 Google 任务 ----------
+const listSel = $('#taskList'), taskBtn = $('#task');
+let taskTimer = null;
 
-(async function loadLists() {
+async function loadLists() {
   try {
     const r = await fetch('/api/lists');
     const j = await r.json();
-    if (!r.ok) throw new Error(j.error);
+    if (!r.ok) throw new Error(j.error || '拿不到列表');
     const saved = localStorage.getItem('voiceclip_list');
+    listSel.textContent = '';
     for (const name of j.lists) {
       const o = document.createElement('option');
       o.value = o.textContent = name;
       listSel.appendChild(o);
     }
+    // 上次选的优先，没有就用服务端给的默认
     const want = j.lists.includes(saved) ? saved : j.default;
     if (j.lists.includes(want)) listSel.value = want;
   } catch (e) {
     listSel.innerHTML = '<option>列表没加载出来</option>';
     listSel.disabled = taskBtn.disabled = true;
   }
-})();
+}
 
 listSel.addEventListener('change',
   () => localStorage.setItem('voiceclip_list', listSel.value));
 
-// 电脑上打开时显示二维码给手机扫
-(async function maybeQR() {
-  const h = location.hostname;
-  if (h !== '127.0.0.1' && h !== 'localhost') return;
+taskBtn.addEventListener('click', async () => {
+  const text = ta.value.trim();
+  if (!text) { say('先说点什么', 'err'); ta.focus(); return; }
+
+  taskBtn.disabled = true;
+  ta.value = '';
+  updateCount();
   try {
-    const j = await (await fetch('/api/lan')).json();
+    await api('/api/task', { text, list: listSel.value });
+    say('已建任务到「' + listSel.value + '」', 'ok');
+    buzz(30);
+    taskBtn.classList.add('done');
+    taskBtn.textContent = '已存';
+    clearTimeout(taskTimer);
+    taskTimer = setTimeout(() => {
+      taskBtn.classList.remove('done');
+      taskBtn.textContent = '提醒事项';
+    }, 1200);
+  } catch (e) {
+    ta.value = text;          // 别把说的话弄丢
+    updateCount();
+    say('建不了任务：' + e.message, 'err');
+    buzz([20, 60, 20]);
+  } finally {
+    taskBtn.disabled = false;
+    ta.focus();
+  }
+});
+
+// ---------- 自动发送 ----------
+autoBox.checked = localStorage.getItem('voiceclip_auto') === '1';
+autoBox.addEventListener('change', () => {
+  localStorage.setItem('voiceclip_auto', autoBox.checked ? '1' : '0');
+  clearTimeout(autoTimer);
+  if (autoBox.checked) say('开了。说完停 2 秒就自己发', 'ok');
+});
+ta.addEventListener('input', () => {
+  updateCount();
+  clearTimeout(autoTimer);
+  if (autoBox.checked && ta.value.trim()) autoTimer = setTimeout(send, 2000);
+});
+
+// ---------- 历史 ----------
+async function load() {
+  try {
+    const r = await fetch('/api/items');
+    const j = await r.json();
+    dot.className = 'on';
+    render(j.items || []);
+  } catch (e) {
+    dot.className = 'off';
+  }
+}
+
+function render(list) {
+  emptyEl.style.display = list.length ? 'none' : 'block';
+  listEl.textContent = '';
+  for (const it of list.slice(0, 20)) {
+    const box = document.createElement('div');
+    box.className = 'item';
+
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    txt.textContent = it.text.length > 200 ? it.text.slice(0, 200) + '…' : it.text;
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = when(it.created) + ' · ' + it.from;
+    txt.appendChild(meta);
+    txt.addEventListener('click', async () => {
+      try {
+        await api('/api/recopy', { id: it.id });
+        say('这条又放回电脑剪贴板了', 'ok');
+        buzz(30);
+      } catch (e) { say('放不回去：' + e.message, 'err'); }
+    });
+
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = '删掉这条';
+    del.addEventListener('click', async () => {
+      try { await api('/api/delete', { id: it.id }); load(); }
+      catch (e) { say('删不掉：' + e.message, 'err'); }
+    });
+
+    box.appendChild(txt);
+    box.appendChild(del);
+    listEl.appendChild(box);
+  }
+}
+
+// ---------- 电脑上打开时显示二维码 ----------
+async function maybeQR() {
+  const h = location.hostname;
+  if (h !== '127.0.0.1' && h !== 'localhost' && h !== '::1') return;
+  try {
+    const r = await fetch('/api/lan');
+    const j = await r.json();
     if (!j.urls || !j.urls.length) return;
-    const box = $('#qr'), url = j.urls[0];
+    const box = $('#qr');
     box.style.display = 'block';
+    const url = j.urls[0];
     const img = document.createElement('img');
     img.src = '/api/qr?size=400&data=' + encodeURIComponent(url);
-    const cap = document.createElement('div');
-    cap.textContent = url;
-    box.appendChild(img); box.appendChild(cap);
+    img.alt = url;
+    const p = document.createElement('p');
+    p.textContent = '手机扫这个，或直接打开';
+    const code = document.createElement('code');
+    code.textContent = url;
+    p.appendChild(document.createElement('br'));
+    p.appendChild(code);
+    box.appendChild(img);
+    box.appendChild(p);
   } catch (e) {}
-})();
+}
 
+// ---------- 一进页面就准备好说话 ----------
+// 直接 focus 只在部分浏览器（尤其「添加到主屏幕」后的独立窗口）能把软键盘顶出来，
+// 移动端普遍要求先有用户手势。所以再兜一层：碰屏幕上任何空白处都聚焦到输入框，
+// 不用精确点那个框。
 ta.focus();
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('button, select, input, .item, a')) return;
+  if (e.target === ta) return;
+  ta.focus();
+});
+
+maybeQR();
+loadLists();
+load();
+setInterval(load, 5000);
 </script>
 </body>
 </html>
