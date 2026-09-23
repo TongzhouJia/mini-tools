@@ -298,16 +298,19 @@ func taskLists() ([]string, error) {
 	return names, nil
 }
 
-func addTask(title, list string) error {
+// addTask 只传原文：放标题还是放详情由 gtasks 定（一行不超 1024 字进标题，
+// 否则整段进详情、标题留空），规则只在那一处。文字常以 - 开头（记参数），
+// 所以要 -- 隔开，不然会被 gtasks 当成选项。
+func addTask(text, list string) error {
 	bin, err := findBin("gtasks")
 	if err != nil {
 		return err
 	}
 	args := []string{"add"}
 	if list != "" {
-		args = append(args, "--list", list)
+		args = append(args, "--list="+list)
 	}
-	args = append(args, title)
+	args = append(args, "--", text)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -708,18 +711,16 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "请求读不懂："+err.Error())
 		return
 	}
-	title := strings.TrimSpace(req.Text)
-	if title == "" {
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
 		fail(w, 400, "没有内容")
 		return
 	}
-	// Google Tasks 的标题是单行的，语音里的换行换成空格
-	title = strings.Join(strings.Fields(title), " ")
-	if err := addTask(title, req.List); err != nil {
+	if err := addTask(text, req.List); err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	log.Printf("建任务到「%s」：%s", req.List, firstLine(title, 30))
+	log.Printf("建任务到「%s」：%s", req.List, firstLine(text, 30))
 	writeJSON(w, map[string]any{"ok": true})
 }
 
