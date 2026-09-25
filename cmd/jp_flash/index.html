@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日语过词</title>
+<style>
+  /* 配色照搬 lexica 学词窗口 */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: linear-gradient(135deg, #0f1f0f, #1a2e1a, #0f1f2e) fixed;
+    color: #e5e7eb;
+    font-family: system-ui, "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  [lang="ja"] { font-family: "Noto Sans CJK JP", "Noto Sans JP", system-ui, sans-serif; }
+  [hidden] { display: none !important; }
+
+  /* 粘贴页 */
+  #setup { max-width: 720px; margin: 0 auto; padding: 40px 16px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; font-size: 1.3em; font-weight: 600; color: #86efac; letter-spacing: .08em; }
+  textarea {
+    width: 100%; height: 50vh; resize: vertical; outline: none;
+    background: rgba(255, 255, 255, .04); color: #f0fdf4;
+    border: 1px solid rgba(255, 255, 255, .12); border-radius: 12px;
+    padding: 14px 16px; font: 15px/1.7 "Noto Sans CJK JP", monospace;
+  }
+  textarea:focus { border-color: rgba(134, 239, 172, .45); }
+  textarea::placeholder { color: rgba(224, 224, 224, .3); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: .9em; color: rgba(224, 224, 224, .55); }
+  .row label { cursor: pointer; user-select: none; }
+  #msg { color: #fca5a5; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modes button {
+    padding: 16px 18px; border-radius: 12px; cursor: pointer; text-align: left;
+    background: rgba(255, 255, 255, .06); color: #f0fdf4;
+    border: 1px solid rgba(255, 255, 255, .14);
+    font: inherit; font-size: 1.1em; font-weight: 600;
+  }
+  .modes button:hover { background: rgba(134, 239, 172, .12); border-color: rgba(134, 239, 172, .4); }
+  .modes small { display: block; margin-top: 4px; font-size: .78em; font-weight: 400; color: rgba(224, 224, 224, .55); }
+
+  /* 过词页 */
+  #card { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; padding: 18px 16px 12px; }
+  .top {
+    width: 100%; max-width: 720px; display: flex; justify-content: space-between; align-items: center;
+    font: 13px ui-monospace, monospace; color: rgba(224, 224, 224, .45); letter-spacing: .08em;
+  }
+  .top button {
+    background: none; color: rgba(224, 224, 224, .6); cursor: pointer; font: inherit;
+    border: 1px solid rgba(255, 255, 255, .15); border-radius: 8px; padding: 4px 12px;
+  }
+  .bar { width: 100%; max-width: 320px; height: 3px; margin-top: 10px; background: rgba(255, 255, 255, .1); border-radius: 2px; overflow: hidden; }
+  #fill { height: 100%; width: 0; background: linear-gradient(90deg, #4ade80, #38bdf8); transition: width .3s ease; }
+  #stage {
+    flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; cursor: pointer; user-select: none; touch-action: manipulation;
+  }
+  #jp { font-size: clamp(2.4em, 9vw, 4.2em); font-weight: 700; color: #f0fdf4; line-height: 1.2; text-shadow: 0 0 30px rgba(74, 222, 128, .2); }
+  #kana { font-size: 1.5em; color: rgba(240, 253, 244, .75); }
+  #zh { font-size: 1.6em; font-weight: 600; color: #86efac; letter-spacing: .04em; line-height: 1.4; max-width: 720px; }
+  #jp:empty, #kana:empty, #zh:empty { display: none; }
+  .hide { visibility: hidden; }
+  #err { color: #fca5a5; font-size: .9em; max-width: 720px; }
+  #hint { font-size: .8em; color: rgba(224, 224, 224, .35); letter-spacing: .06em; text-align: center; }
+
+  @media (max-width: 560px) {
+    #setup { padding-top: 20px; }
+    .modes { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<section id="setup">
+  <h1>日语过词</h1>
+  <textarea id="paste" spellcheck="false" lang="ja"
+    placeholder="把词表粘进来，一行一个：&#10;日文,假名,中文,音频文件&#10;&#10;第 4 列可以空着；表头有没有都行，逗号或 Tab 分隔都行"></textarea>
+  <div class="row">
+    <span id="count"></span>
+    <span id="msg"></span>
+    <label><input type="checkbox" id="shuffle" checked> 打乱顺序</label>
+  </div>
+  <div class="modes">
+    <button data-mode="look">看日语<small>先显示日文，按一下念出来、出中文</small></button>
+    <button data-mode="listen">先听<small>先只念，按一下出日文和中文</small></button>
+  </div>
+</section>
+
+<section id="card" hidden>
+  <div class="top"><span id="progress"></span><button id="back">返回</button></div>
+  <div class="bar"><div id="fill"></div></div>
+  <div id="stage">
+    <div id="jp" lang="ja"></div>
+    <div id="kana" lang="ja"></div>
+    <div id="zh"></div>
+    <div id="err"></div>
+  </div>
+  <div id="hint"></div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+// 无痕窗口之类的地方 localStorage 会抛错，读写都兜住
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+let words = [];     // 粘进来的词
+let deck = [];      // 这一遍的顺序
+let idx = 0;        // 过到第几个
+let shown = false;  // 当前这个词揭开没有
+let mode = 'look';  // look = 看日语，listen = 先听
+
+// ── 解析词表 ─────────────────────────────────────────────
+
+// 一行 CSV 拆成格子，认双引号（"很好,优秀；足够" 这种中文里带逗号的）
+function splitCSV(line) {
+  const cells = [];
+  let cur = '', quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c !== '"') cur += c;
+      else if (line[i + 1] === '"') { cur += '"'; i++; }
+      else quoted = false;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { cells.push(cur); cur = ''; }
+    else cur += c;
+  }
+  cells.push(cur);
+  return cells;
+}
+
+function parse(text) {
+  const out = [];
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const cells = (line.includes('\t') ? line.split('\t') : splitCSV(line)).map(c => c.trim());
+    let [jp = '', kana = '', zh = '', file = ''] = cells;
+    if (cells.length === 2) { zh = kana; kana = ''; }  // 只有两列就当 日文,中文
+    if (!jp) continue;
+    if (/^假名/.test(kana) || /^日[文语語]([(（].*)?$/.test(jp)) continue;  // 表头
+    out.push({ jp, kana: kana === jp ? '' : kana, zh, file });
+  }
+  return out;
+}
+
+// ── 发音 ─────────────────────────────────────────────────
+
+const player = new Audio();
+const audioCache = new Map();  // 地址 → Promise<blob 地址>
+let playSeq = 0;
+
+// 有假名念假名（读音不会念错），没有念日文；～ / 括号这些符号去掉
+function sayText(w) {
+  return (w.kana || w.jp).replace(/[～〜~()（）]/g, '').replace(/[/／]/g, '、').trim();
+}
+
+function audioURL(w) {
+  return '/api/say?file=' + encodeURIComponent(w.file) + '&text=' + encodeURIComponent(sayText(w));
+}
+
+// 先 fetch 成 blob 再放：<audio> 会把服务端的报错吞掉，fetch 才读得到原因
+function fetchAudio(w) {
+  const u = audioURL(w);
+  if (!audioCache.has(u)) {
+    const p = fetch(u).then(async r => {
+      if (!r.ok) throw new Error((await r.text()).trim() || ('HTTP ' + r.status));
+      return URL.createObjectURL(await r.blob());
+    });
+    p.catch(() => audioCache.delete(u));  // 失败的不留，下次再试
+    audioCache.set(u, p);
+  }
+  return audioCache.get(u);
+}
+
+async function play(w) {
+  const seq = ++playSeq;
+  $('err').textContent = '';
+  try {
+    const src = await fetchAudio(w);
+    if (seq !== playSeq) return;  // 等音频的工夫已经翻到别的词了
+    player.src = src;
+    await player.play();
+  } catch (e) {
+    if (seq !== playSeq || e.name === 'AbortError') return;
+    $('err').textContent = e.name === 'NotAllowedError'
+      ? '浏览器拦了自动播放，点一下页面再按 R'
+      : '念不出来：' + (e.message || e);
+  }
+}
+
+function preload(from) {
+  for (let i = from; i < Math.min(from + 3, deck.length); i++) fetchAudio(deck[i]).catch(() => {});
+}
+
+// ── 过词 ─────────────────────────────────────────────────
+
+function start() {
+  deck = words.slice();
+  if ($('shuffle').checked) {
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+  }
+  idx = 0;
+  if (document.activeElement) document.activeElement.blur();  // 别让刚点的按钮吃掉空格
+  $('setup').hidden = true;
+  $('card').hidden = false;
+  enter();
+}
+
+// 进入第 idx 个词
+function enter() {
+  shown = false;
+  playSeq++;
+  player.pause();
+  render();
+  if (idx >= deck.length) return;
+  if (mode === 'listen') play(deck[idx]);
+  preload(idx);
+}
+
+// 空格 / 回车 / 点屏幕
+function step() {
+  if (idx >= deck.length) { start(); return; }  // 过完了再按 = 再过一遍
+  if (!shown) {
+    shown = true;
+    render();
+    if (mode === 'look') play(deck[idx]);
+  } else {
+    idx++;
+    enter();
+  }
+}
+
+function render() {
+  const n = deck.length;
+  $('fill').style.width = (Math.min(idx, n) / n * 100) + '%';
+  $('err').textContent = '';
+  if (idx >= n) {
+    $('progress').textContent = `${n} / ${n}`;
+    $('jp').lang = 'zh-CN';
+    $('jp').textContent = '过完了';
+    $('kana').textContent = '';
+    $('zh').textContent = `一共 ${n} 个`;
+    for (const id of ['jp', 'kana', 'zh']) $(id).classList.remove('hide');
+    $('hint').textContent = '空格 / 回车 = 再过一遍' + ($('shuffle').checked ? '（重新打乱）' : '') + ' · Esc = 换一批';
+    return;
+  }
+  const w = deck[idx];
+  $('progress').textContent = `${idx + 1} / ${n}`;
+  $('jp').lang = 'ja';
+  $('jp').textContent = w.jp;
+  $('kana').textContent = w.kana;
+  $('zh').textContent = w.zh;
+  $('jp').classList.toggle('hide', mode === 'listen' && !shown);
+  $('kana').classList.toggle('hide', !shown);
+  $('zh').classList.toggle('hide', !shown);
+  $('hint').textContent = shown ? '空格 / 回车 = 下一个 · R = 再念一遍'
+    : mode === 'look' ? '空格 / 回车 = 念出来、看中文 · Esc = 返回'
+    : '空格 / 回车 = 看日文和中文 · R = 再念一遍 · Esc = 返回';
+}
+
+function back() {
+  playSeq++;
+  player.pause();
+  $('card').hidden = true;
+  $('setup').hidden = false;
+  $('paste').focus();
+}
+
+// ── 绑定 ─────────────────────────────────────────────────
+
+function updateCount() {
+  const n = parse($('paste').value).length;
+  $('count').textContent = n ? `认出 ${n} 个词` : '';
+  $('msg').textContent = '';
+}
+
+$('paste').value = store.get('jp_flash_text') || '';
+$('shuffle').checked = store.get('jp_flash_shuffle') !== '0';
+updateCount();
+
+$('paste').addEventListener('input', () => {
+  store.set('jp_flash_text', $('paste').value);
+  updateCount();
+});
+$('shuffle').addEventListener('change', () => store.set('jp_flash_shuffle', $('shuffle').checked ? '1' : '0'));
+
+for (const b of document.querySelectorAll('.modes button')) {
+  b.addEventListener('click', () => {
+    words = parse($('paste').value);
+    if (!words.length) {
+      $('msg').textContent = '没认出词来：一行一个，日文,假名,中文,音频文件';
+      return;
+    }
+    mode = b.dataset.mode;
+    start();
+  });
+}
+
+$('stage').addEventListener('click', step);
+$('back').addEventListener('click', back);
+
+document.addEventListener('keydown', e => {
+  if ($('card').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    if (!e.repeat) step();  // 按住不放不连翻
+  } else if (e.key === 'r' || e.key === 'R') {
+    if (idx < deck.length) play(deck[idx]);
+  } else if (e.key === 'Escape') {
+    back();
+  }
+});
+</script>
+</body>
+</html>
