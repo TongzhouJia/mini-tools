@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地语音合成</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f172a, #111827 55%, #0c1a2b) fixed;
+    color: #e5e7eb;
+    font-family: system-ui, "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  [hidden] { display: none !important; }
+  main { max-width: 760px; margin: 0 auto; padding: 36px 16px 60px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; font-size: 1.3em; font-weight: 600; color: #93c5fd; letter-spacing: .08em; }
+  h1 small { margin-left: 10px; font-size: .62em; font-weight: 400; color: rgba(229, 231, 235, .4); letter-spacing: .02em; }
+
+  textarea, input, select, button { font: inherit; color: inherit; }
+  textarea, input[type=text], select {
+    background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: 10px; outline: none;
+  }
+  textarea:focus, input[type=text]:focus, select:focus { border-color: rgba(147, 197, 253, .5); }
+  textarea::placeholder, input::placeholder { color: rgba(229, 231, 235, .3); }
+  select option, select optgroup { background: #1f2937; color: #e5e7eb; }
+  #text { width: 100%; height: 38vh; min-height: 160px; resize: vertical; padding: 14px 16px; font-size: 16px; line-height: 1.75; }
+  select, input[type=text] { padding: 8px 10px; }
+
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .row label { color: rgba(229, 231, 235, .55); font-size: .9em; }
+  #voice { min-width: 0; flex: 1 1 260px; }
+  #instruct { flex: 1; min-width: 200px; }
+  .link { background: none; border: none; padding: 0; color: rgba(252, 165, 165, .8); cursor: pointer; font-size: .85em; }
+
+  .btn {
+    padding: 9px 22px; border-radius: 10px; cursor: pointer; font-weight: 600;
+    background: #2563eb; border: 1px solid #3b82f6; color: #fff;
+  }
+  .btn:hover { background: #1d4ed8; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.ghost { background: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .18); color: #e5e7eb; }
+  .btn.ghost:hover { background: rgba(255, 255, 255, .1); }
+  #status { color: rgba(229, 231, 235, .6); font-size: .9em; }
+  .err { color: #fca5a5; font-size: .9em; white-space: pre-wrap; word-break: break-word; }
+  .hint { margin: 0; color: rgba(229, 231, 235, .38); font-size: .82em; line-height: 1.6; }
+
+  #result { display: flex; align-items: center; gap: 14px; }
+  #result audio { flex: 1; min-width: 0; height: 40px; }
+  #result a { color: #93c5fd; font-size: .9em; }
+
+  details { margin-top: 18px; border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 14px; }
+  summary { cursor: pointer; color: rgba(229, 231, 235, .7); user-select: none; }
+  .pane { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .tabs { display: flex; gap: 8px; margin-top: 12px; }
+  .tabs button {
+    background: none; border: 1px solid rgba(255, 255, 255, .15); border-radius: 8px;
+    padding: 5px 14px; cursor: pointer; color: rgba(229, 231, 235, .6);
+  }
+  .tabs button.on { border-color: rgba(147, 197, 253, .6); color: #93c5fd; }
+  .pane textarea { width: 100%; height: 70px; resize: vertical; padding: 10px 12px; }
+  .pane input[type=text] { width: 100%; }
+  .pane audio { width: 100%; height: 40px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>本地语音合成<small>Qwen3-TTS 1.7B · 本机显卡</small></h1>
+
+  <textarea id="text" spellcheck="false"
+    placeholder="把要念的字粘进来。中文、日语、英语都行，长文会一句一句接着念。&#10;Ctrl+Enter 朗读，Esc 停止"></textarea>
+
+  <div class="row">
+    <label for="voice">声音</label>
+    <select id="voice"></select>
+    <button class="link" id="del" hidden>删掉这个声音</button>
+    <label for="lang">语言</label>
+    <select id="lang">
+      <option value="auto">自动判断</option>
+      <option value="chinese">中文</option>
+      <option value="english">英语</option>
+      <option value="japanese">日语</option>
+      <option value="korean">韩语</option>
+      <option value="german">德语</option>
+      <option value="french">法语</option>
+      <option value="russian">俄语</option>
+      <option value="portuguese">葡萄牙语</option>
+      <option value="spanish">西班牙语</option>
+      <option value="italian">意大利语</option>
+    </select>
+  </div>
+  <div class="row" id="instructRow">
+    <label for="instruct">语气</label>
+    <input type="text" id="instruct" placeholder="可不填。比如：开心一点 / 小声说悄悄话 / 很生气 / 慢一点">
+  </div>
+
+  <div class="row">
+    <button class="btn" id="go">朗读</button>
+    <button class="btn ghost" id="stop" hidden>停止</button>
+    <span id="status"></span>
+  </div>
+  <div class="err" id="err"></div>
+  <div id="result" hidden>
+    <audio id="player" controls></audio>
+    <a id="dl" download>下载</a>
+  </div>
+
+  <details id="add">
+    <summary>加一个声音</summary>
+    <div class="tabs">
+      <button data-tab="up" class="on">传一段录音</button>
+      <button data-tab="ds">用一句话描述</button>
+    </div>
+
+    <div class="pane" id="tab-up">
+      <input type="file" id="upFile" accept="audio/*,video/*">
+      <input type="text" id="upName" placeholder="给它起个名字（不填就用文件名）">
+      <input type="text" id="upText" placeholder="录音里说的话（可不填，会自动听写）">
+      <div class="row"><button class="btn ghost" id="upGo">存成新声音</button><span id="upMsg" class="hint"></span></div>
+      <p class="hint">5~15 秒、只有一个人在说话、没有背景音乐的最好，只取前 20 秒。存好之后在上面「声音」里选它。</p>
+    </div>
+
+    <div class="pane" id="tab-ds" hidden>
+      <textarea id="dsDesc" placeholder="想要什么样的声音？比如：二十岁左右的日本女生，声音清亮，说话慢条斯理"></textarea>
+      <input type="text" id="dsText" placeholder="试听时念的话">
+      <div class="row"><button class="btn ghost" id="dsGo">试听</button><span id="dsMsg" class="hint"></span></div>
+      <div class="pane" id="dsResult" hidden>
+        <audio id="dsAudio" controls></audio>
+        <div class="row"><input type="text" id="dsName" placeholder="起个名字" style="flex:1"><button class="btn ghost" id="dsSave">就要这个</button></div>
+      </div>
+      <p class="hint">同一句描述，每次试听出来的都不一样，不满意就再点一次。存下来之后这个声音就定住了。<br>
+        语言跟着上面的「语言」走，描述用中文写就行。</p>
+    </div>
+  </details>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+// 无痕窗口之类的地方 localStorage 会抛错，读写都兜住
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+let mine = [];  // 自己加的声音
+
+// ── 声音列表 ─────────────────────────────────────────────
+
+async function loadVoices(select) {
+  const res = await fetch('/api/voices');
+  const data = await res.json();
+  mine = data.mine;
+  const sel = $('voice');
+  sel.innerHTML = '';
+  const groups = {};
+  for (const p of data.presets) (groups[p.lang] ||= []).push(p);
+  for (const [lang, list] of Object.entries(groups)) {
+    const g = document.createElement('optgroup');
+    g.label = '预设 · ' + lang;
+    for (const p of list) g.append(new Option(`${p.name} · ${p.desc}`, 'p:' + p.id));
+    sel.append(g);
+  }
+  if (mine.length) {
+    const g = document.createElement('optgroup');
+    g.label = '我的声音';
+    for (const v of mine) g.append(new Option(`${v.name}（${v.from === 'design' ? '描述' : '克隆'}）`, 'm:' + v.id));
+    sel.append(g);
+  }
+  const want = select || store.get('tts.voice');
+  if (want && [...sel.options].some(o => o.value === want)) sel.value = want;
+  voiceChanged();
+}
+
+function voiceChanged() {
+  const v = $('voice').value;
+  store.set('tts.voice', v);
+  $('instructRow').hidden = !v.startsWith('p:');  // 只有预设音色听得懂「语气」
+  $('del').hidden = !v.startsWith('m:');
+}
+$('voice').onchange = voiceChanged;
+
+$('del').onclick = async () => {
+  const id = $('voice').value.slice(2);
+  const v = mine.find(x => x.id === id);
+  if (!v || !confirm(`删掉「${v.name}」？`)) return;
+  const res = await fetch('/api/voices?id=' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!res.ok) return showErr(await res.text());
+  store.set('tts.voice', '');
+  loadVoices();
+};
+
+// ── 切句 ─────────────────────────────────────────────────
+// 先按行分段，段里按句末标点切，再把短句攒到 LIMIT 字以内。
+// 第一块故意切短，好快点出声；后面的块边念边在合成，赶得上。
+
+const FIRST = 40, LIMIT = 120;
+
+function segment(text) {
+  const out = [];
+  for (const para of text.split(/\n/).map(s => s.trim()).filter(Boolean)) {
+    let buf = '';
+    for (const s of sentences(para)) {
+      const cap = out.length === 0 ? FIRST : LIMIT;
+      if (buf && (buf + s).length > cap) { out.push({ text: buf }); buf = ''; }
+      buf = join(buf, s);
+    }
+    if (buf) out.push({ text: buf });
+    out[out.length - 1].paraEnd = true;
+  }
+  return out;
+}
+
+// 英文句子拼回去要补空格，中日文不用
+function join(a, b) {
+  return a && /[A-Za-z0-9.,!?;:'")\]]$/.test(a) && /^[A-Za-z0-9"'(\[]/.test(b) ? a + ' ' + b : a + b;
+}
+
+function sentences(p) {
+  const res = [];
+  // 句末标点（连同后面跟着的引号括号）算一句；英文句号要后面有空格加大写才切，免得切坏 3.14、e.g.
+  const parts = p.match(/[^。！？!?；;…]+(?:[。！？!?；;…]+[」』”’"')）]*)?|[。！？!?；;…]+[」』”’"')）]*/g) || [p];
+  for (const part of parts) {
+    for (const q of part.split(/(?<=[.!?]["')\]]?)\s+(?=["'(\[]?[A-Z0-9])/)) {
+      if (q.trim()) long(res, q.trim());
+    }
+  }
+  return res;
+}
+
+// 一句太长就在逗号处切开，还长就硬切
+function long(res, s) {
+  if (s.length <= LIMIT) { res.push(s); return; }
+  let buf = '';
+  for (const b of s.match(/[^，,、：:]+[，,、：:]?\s*/g) || [s]) {
+    if (buf && (buf + b).length > LIMIT) { res.push(buf.trim()); buf = ''; }
+    if (b.length > LIMIT) {
+      for (let i = 0; i < b.length; i += LIMIT) res.push(b.slice(i, i + LIMIT));
+      continue;
+    }
+    buf += b;
+  }
+  if (buf.trim()) res.push(buf.trim());
+}
+
+// ── wav 拆装 ─────────────────────────────────────────────
+// 服务端回的都是 16 位单声道；按块找 fmt 和 data，不假定头是 44 字节
+
+function parseWav(ab) {
+  const dv = new DataView(ab);
+  let sr = 24000, off = 12;
+  while (off + 8 <= dv.byteLength) {
+    const id = String.fromCharCode(dv.getUint8(off), dv.getUint8(off + 1), dv.getUint8(off + 2), dv.getUint8(off + 3));
+    const size = dv.getUint32(off + 4, true);
+    if (id === 'fmt ') sr = dv.getUint32(off + 12, true);
+    if (id === 'data') {
+      const n = Math.min(size, dv.byteLength - off - 8) >> 1;
+      return { sr, samples: new Int16Array(ab.slice(off + 8, off + 8 + n * 2)) };
+    }
+    off += 8 + size + (size & 1);
+  }
+  throw new Error('服务端回来的音频看不懂');
+}
+
+function makeWav(chunks, sr) {
+  const n = chunks.reduce((a, c) => a + c.length, 0);
+  const buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf);
+  const str = (o, s) => [...s].forEach((c, i) => dv.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  str(36, 'data'); dv.setUint32(40, n * 2, true);
+  let o = 44;
+  for (const c of chunks) { new Int16Array(buf, o, c.length).set(c); o += c.length * 2; }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// ── 朗读 ─────────────────────────────────────────────────
+
+let run = 0, ctx = null, sources = [], ctrl = null, endTimer = null, lastURL = null;
+let generating = false, segLabel = '';
+
+async function speak() {
+  const text = $('text').value.trim();
+  if (!text) return;
+  stop();
+  if (lastURL) { URL.revokeObjectURL(lastURL); lastURL = null; }
+  $('result').hidden = true;
+  const my = ++run;
+  ctrl = new AbortController();
+  const segs = segment(text);
+  ctx ||= new AudioContext();
+  await ctx.resume();
+  showErr('');
+  busy(true);
+  generating = true;
+
+  const body = { voice: $('voice').value, language: $('lang').value };
+  if (!$('instructRow').hidden) body.instruct = $('instruct').value.trim();
+  const pcm = [];
+  let sr = 24000, at = 0, total = 0;
+  const t0 = performance.now();
+  const poll = setInterval(() => pollStatus(my), 800);
+  try {
+    for (let i = 0; i < segs.length; i++) {
+      segLabel = segs.length > 1 ? `合成 ${i + 1}/${segs.length}…` : '合成中…';
+      setStatus(segLabel);
+      const res = await fetch('/api/speak', {
+        method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, text: segs[i].text }),
+      });
+      if (!res.ok) throw new Error((await res.text()) || res.statusText);
+      const wav = parseWav(await res.arrayBuffer());
+      if (my !== run) return;
+      if (i === 0) console.log(`第一句 ${((performance.now() - t0) / 1000).toFixed(1)} 秒出声`);
+      sr = wav.sr;
+      const gap = i === segs.length - 1 ? 0 : segs[i].paraEnd ? 0.45 : 0.12;
+      pcm.push(wav.samples, new Int16Array(Math.round(gap * sr)));
+      total += wav.samples.length / sr + gap;
+
+      const buf = ctx.createBuffer(1, wav.samples.length, sr);
+      const f = buf.getChannelData(0);
+      for (let k = 0; k < f.length; k++) f[k] = wav.samples[k] / 32768;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      at = Math.max(at, ctx.currentTime + 0.05);
+      src.start(at);
+      at += buf.duration + gap;
+      sources.push(src);
+    }
+    // 全合成完了：拼成一整段，放进播放条，能拖能下载
+    generating = false;
+    lastURL = URL.createObjectURL(makeWav(pcm, sr));
+    $('player').src = lastURL;
+    $('dl').href = lastURL;
+    $('dl').download = text.replace(/\s+/g, ' ').slice(0, 16).replace(/[\\/:*?"<>|]/g, '') + '.wav';
+    const took = (performance.now() - t0) / 1000;
+    setStatus(`${fmt(total)}的音频，合成用了 ${fmt(took)}`);
+    const left = at - ctx.currentTime;
+    endTimer = setTimeout(() => { if (my === run) finish(); }, Math.max(0, left * 1000));
+  } catch (e) {
+    if (e.name === 'AbortError' || my !== run) return;
+    stop();
+    setStatus('');
+    showErr(e.message);
+  } finally {
+    if (my === run) generating = false;
+    clearInterval(poll);
+  }
+}
+
+// 念完了（或者点了停止）：播放条露出来，想重听、拖进度、下载都在那
+function finish() {
+  busy(false);
+  if (lastURL) $('result').hidden = false;
+}
+
+function stop() {
+  run++;
+  generating = false;
+  if (ctrl) ctrl.abort();
+  for (const s of sources) { try { s.stop(); } catch {} }
+  sources = [];
+  clearTimeout(endTimer);
+  finish();
+}
+
+async function pollStatus(my) {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    if (my === run && generating) setStatus(s.state === 'loading' ? '正在把模型装进显卡，要等十几秒…' : segLabel);
+  } catch {}
+}
+
+function busy(on) {
+  $('go').hidden = on;
+  $('stop').hidden = !on;
+}
+function setStatus(s) { $('status').textContent = s; }
+function showErr(s) { $('err').textContent = s; }
+function fmt(sec) {
+  return sec < 60 ? `${sec.toFixed(1)} 秒` : `${Math.floor(sec / 60)} 分 ${Math.round(sec % 60)} 秒`;
+}
+
+$('go').onclick = speak;
+$('stop').onclick = () => { stop(); setStatus('停了'); };
+$('player').onplay = () => { for (const s of sources) { try { s.stop(); } catch {} } };
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && document.activeElement === $('text')) { e.preventDefault(); speak(); }
+  if (e.key === 'Escape' && !$('stop').hidden) { stop(); setStatus('停了'); }
+});
+
+// 上次的字、语言、语气都留着
+$('text').value = store.get('tts.text') || '';
+$('text').oninput = () => store.set('tts.text', $('text').value);
+$('lang').value = store.get('tts.lang') || 'auto';
+$('instruct').value = store.get('tts.instruct') || '';
+$('instruct').oninput = () => store.set('tts.instruct', $('instruct').value);
+
+// ── 加一个声音 ───────────────────────────────────────────
+
+for (const b of document.querySelectorAll('.tabs button')) {
+  b.onclick = () => {
+    for (const x of document.querySelectorAll('.tabs button')) x.classList.toggle('on', x === b);
+    $('tab-up').hidden = b.dataset.tab !== 'up';
+    $('tab-ds').hidden = b.dataset.tab !== 'ds';
+  };
+}
+
+$('upGo').onclick = async () => {
+  const f = $('upFile').files[0];
+  if (!f) return upMsg('先选一段录音');
+  const fd = new FormData();
+  fd.append('audio', f);
+  fd.append('name', $('upName').value.trim());
+  fd.append('text', $('upText').value.trim());
+  $('upGo').disabled = true;
+  upMsg($('upText').value.trim() ? '转换中…' : '转换、听写中（要十来秒）…');
+  try {
+    const res = await fetch('/api/voices', { method: 'POST', body: fd });
+    if (!res.ok) return upMsg(await res.text());
+    const v = await res.json();
+    await loadVoices('m:' + v.id);
+    upMsg(v.text ? `存好了，已经选上。听写出来的原文：${v.text}` : '存好了，已经选上（没听出原文，只照声纹学，像的程度差一点）');
+    $('upFile').value = $('upName').value = $('upText').value = '';
+  } finally {
+    $('upGo').disabled = false;
+  }
+};
+function upMsg(s) { $('upMsg').textContent = s; }
+
+const SAMPLE = {
+  chinese: '你好，很高兴认识你。今天天气不错，我们出去走走吧。',
+  japanese: 'こんにちは、はじめまして。今日はいい天気ですね。少し散歩しませんか。',
+  english: "Hi, nice to meet you. It's a lovely day today, shall we go for a walk?",
+  korean: '안녕하세요, 만나서 반가워요. 오늘 날씨가 정말 좋네요.',
+};
+function sample() { return SAMPLE[$('lang').value] || SAMPLE.chinese; }
+$('dsText').value = sample();
+$('lang').onchange = () => {
+  store.set('tts.lang', $('lang').value);
+  if (Object.values(SAMPLE).includes($('dsText').value) || !$('dsText').value.trim()) $('dsText').value = sample();
+};
+
+let designId = null;
+$('dsGo').onclick = async () => {
+  const instruct = $('dsDesc').value.trim();
+  if (!instruct) return dsMsg('先写一句：想要什么样的声音');
+  $('dsGo').disabled = true;
+  dsMsg('生成中（第一次要先装模型，十几秒）…');
+  try {
+    const res = await fetch('/api/design', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruct, text: $('dsText').value.trim() || sample(), language: $('lang').value }),
+    });
+    if (!res.ok) return dsMsg(await res.text());
+    designId = res.headers.get('X-Design-Id');
+    $('dsAudio').src = URL.createObjectURL(await res.blob());
+    $('dsResult').hidden = false;
+    $('dsAudio').play();
+    dsMsg('');
+  } finally {
+    $('dsGo').disabled = false;
+  }
+};
+$('dsSave').onclick = async () => {
+  if (!designId) return;
+  const res = await fetch('/api/design/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: designId, name: $('dsName').value.trim() }),
+  });
+  if (!res.ok) return dsMsg(await res.text());
+  const v = await res.json();
+  await loadVoices('m:' + v.id);
+  designId = null;
+  $('dsResult').hidden = true;
+  $('dsName').value = '';
+  dsMsg(`存好了，「${v.name}」已经选上`);
+};
+function dsMsg(s) { $('dsMsg').textContent = s; }
+
+loadVoices();
+</script>
+</body>
+</html>
