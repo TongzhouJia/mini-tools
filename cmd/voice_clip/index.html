@@ -144,6 +144,20 @@
   #task:disabled { opacity: .55; cursor: default; }
   #task.done { background: var(--ok); }
 
+  /* AI Mode 只在安卓 app（~/android/voiceclip）里出现：网页开不了 Google app 的 AI Mode 空白页 */
+  #ai {
+    display: none;
+    padding: 11px 12px;
+    font-size: 15px; font-weight: 600;
+    color: var(--accent); background: var(--accent-soft);
+    transition: transform .12s, opacity .2s;
+  }
+  #ai:active { transform: scale(.96); }
+  .app #ai { display: block; margin-right: auto; }
+  .app #count { display: none; }
+  .app .composer-foot { gap: 8px; flex-wrap: wrap; }
+  .app #task, .app #send { padding: 11px 12px; }
+
   .hint {
     margin: 11px 6px 0;
     font-size: 13px; color: var(--dim);
@@ -254,6 +268,7 @@
   <textarea id="text" placeholder="说一段话。回车发到电脑剪贴板，右上角加号存成任务"
             autocapitalize="sentences" enterkeyhint="send" autofocus></textarea>
   <div class="composer-foot">
+    <button id="ai">AI Mode</button>
     <span id="count"></span>
     <button id="task">提醒事项</button>
     <button id="send">发送到电脑</button>
@@ -417,6 +432,19 @@ taskBtn.addEventListener('click', async () => {
     ta.focus();
   }
 });
+
+// ---------- AI Mode：只有安卓 app 注入了 VoiceClipApp 才有 ----------
+// 框里有字就带着问题进 AI Mode 出答案，空着就进 AI Mode 的空白页（键盘弹着）。
+if (window.VoiceClipApp) {
+  document.body.classList.add('app');
+  $('#ai').addEventListener('click', () => {
+    const text = ta.value.trim();
+    clearTimeout(autoTimer);
+    if (!VoiceClipApp.aiMode(text)) { say('打不开 AI Mode', 'err'); return; }
+    ta.value = '';
+    updateCount();
+  });
+}
 
 // ---------- 自动发送 ----------
 autoBox.checked = localStorage.getItem('voiceclip_auto') === '1';
