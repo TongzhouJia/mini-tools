@@ -246,6 +246,10 @@ func unitText(s Service) string {
 	if s.Dir != "" {
 		fmt.Fprintf(&sb, "WorkingDirectory=%s\n", s.Dir)
 	}
+	// 登录时这些单元比桌面会话把 PATH 导进 systemd 早起来，拿到的 PATH 没有 ~/.local/bin，
+	// gmail-send / gtasks / audio_transcriber 全都找不到。写死一份，别跟登录顺序赌。
+	// 放在 s.Env 前面，配置里自己写了 PATH 的照样能盖掉。
+	sb.WriteString("Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n")
 	for _, e := range s.Env {
 		fmt.Fprintf(&sb, "Environment=%s\n", e)
 	}
