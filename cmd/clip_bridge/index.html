@@ -51,6 +51,7 @@
   dialog{border:none;border-radius:14px;background:var(--card);color:var(--fg);padding:18px;text-align:center}
   dialog::backdrop{background:#0009}
   .empty{text-align:center;color:var(--dim);padding:26px 0}
+  .warn{color:var(--danger);font-size:13px;margin:0 2px 10px;white-space:pre-wrap;word-break:break-word}
 </style>
 </head>
 <body>
@@ -80,6 +81,7 @@
     <div class="bar" id="bar"><i></i></div>
   </div>
 
+  <div id="laterErr" class="warn" hidden></div>
   <div id="list"></div>
 </div>
 
@@ -96,9 +98,9 @@ const $ = s => document.querySelector(s);
 const listEl = $('#list');
 let lastSig = '';
 
-function toast(msg){
+function toast(msg, ms = 2200){
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
-  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove('on'), 2200);
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove('on'), ms);
 }
 function esc(s){ return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function size(n){
@@ -149,6 +151,7 @@ function render(items){
              `<a class="btn" href="/api/file/${it.id}?inline=1" target="_blank"><button class="mini">打开</button></a>`;
     }
     acts += `<button class="mini" data-mail="${it.id}">邮件</button>` +
+            `<button class="mini" data-later="${it.id}">明天发邮件</button>` +
             `<button class="mini danger" data-del="${it.id}">删除</button>`;
     return `<div class="item">${head}${body}<div class="acts">${acts}</div></div>`;
   }).join('');
@@ -160,13 +163,14 @@ async function refresh(){
     const j = await api('/api/items');
     const sig = JSON.stringify(j.items.map(i=>i.id));
     cache = j.items;
+    const w = $('#laterErr'); w.textContent = j.laterErr || ''; w.hidden = !j.laterErr;
     if(sig !== lastSig){ lastSig = sig; render(j.items); }
   }catch(e){ /* 手机息屏回来会失败一次，忽略 */ }
 }
 
 listEl.addEventListener('click', async e => {
   const b = e.target.closest('button'); if(!b) return;
-  const id = b.dataset.copy || b.dataset.mail || b.dataset.del; if(!id) return;
+  const id = b.dataset.copy || b.dataset.mail || b.dataset.later || b.dataset.del; if(!id) return;
   const it = cache.find(x => x.id === id);
   if(b.dataset.copy){ copy(it ? it.text : ''); return; }
   if(b.dataset.del){
@@ -180,6 +184,12 @@ listEl.addEventListener('click', async e => {
     try{ const j = await api('/api/mail', {id}); toast(j.ok); }
     catch(err){ toast(err.message); }
     b.disabled = false; b.textContent = '邮件';
+  }
+  if(b.dataset.later){
+    b.disabled = true;
+    try{ const j = await api('/api/later', {id}); toast(j.ok, 5000); }
+    catch(err){ toast(err.message); }
+    b.disabled = false;
   }
 });
 

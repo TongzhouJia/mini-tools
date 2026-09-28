@@ -67,6 +67,9 @@ func main() {
 	if err := loadItems(); err != nil {
 		log.Fatalf("读不了记录：%v", err)
 	}
+	if err := loadJobs(); err != nil {
+		log.Fatalf("读不了「明天发邮件」的排期：%v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
@@ -76,6 +79,7 @@ func main() {
 	mux.HandleFunc("/api/file/", handleFile)
 	mux.HandleFunc("/api/delete", handleDelete)
 	mux.HandleFunc("/api/mail", mailHandler(*mailTo))
+	mux.HandleFunc("/api/later", handleLater)
 	mux.HandleFunc("/api/qr", handleQR)
 
 	host := "0.0.0.0"
@@ -98,6 +102,7 @@ func main() {
 	fmt.Printf("  数据：   %s\n", dataDir)
 	fmt.Println("  Ctrl+C 退出")
 
+	go laterLoop(*mailTo)
 	log.Fatal(http.Serve(ln, logged(mux)))
 }
 
@@ -107,6 +112,8 @@ func usage() {
 干什么:
   起一个局域网网页，手机和电脑打开同一个地址，就能互相丢文件和文字。
   每条内容都能一键复制、下载，或者直接当邮件发给自己（走 gmail-send）。
+  「明天发邮件」：点完 3–5 小时后随机发一封，第二天早上 5–6 点再发一封，
+  主题是「复习 1/2：…」「复习 2/2：…」，拿来第二天复习用。
 
 怎么调:
   clip_bridge                起服务，默认 :8088，监听 0.0.0.0（手机能连）
@@ -122,6 +129,8 @@ func usage() {
 产物落哪:
   文件   $HOME/.local/share/clip_bridge/files/<id>_<原文件名>
   记录   $HOME/.local/share/clip_bridge/items.jsonl（一行一条）
+  排期   $HOME/.local/share/clip_bridge/later.json + later/<id>/（「明天发邮件」的快照，
+         发完第二封自动删）
   可用 CLIP_BRIDGE_DATA_DIR 环境变量或 -data 改。页面上删除 = 连文件一起删。
 
 依赖什么:
@@ -133,6 +142,10 @@ func usage() {
     公司网）别开着不管，用完 Ctrl+C。
   - 手机连的是 IP 不是域名，不受全局代理影响；连不上先确认两边在同一个 Wi-Fi。
   - Gmail 附件上限 25MB，超了邮件按钮会直接拒绝（文件本身照样能下载）。
+  - 「明天发邮件」点的时候就把文件硬链接了一份，之后在页面上删掉这条也照样发。
+    电脑关机/睡眠错过了点，开机后一分钟内补发；第二封排在第一封实际发出之后的
+    那个早上。第一封落在半夜 0–6 点的话，第二封挪到再下一个早上（醒来别看到两封）。
+    同一条点第二次不会重排。发不出去会一直重试，连着失败 3 次页面顶上冒红字。
   - 大文件是边收边落盘的，不占内存；但浏览器标签页别中途关。
 
 `)
@@ -289,7 +302,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	out := make([]Item, len(items))
 	copy(out, items)
 	mu.Unlock()
-	writeJSON(w, map[string]any{"items": out, "mailLimit": gmailAttachLimit})
+	writeJSON(w, map[string]any{"items": out, "mailLimit": gmailAttachLimit, "laterErr": laterWarning()})
 }
 
 func handleText(w http.ResponseWriter, r *http.Request) {
