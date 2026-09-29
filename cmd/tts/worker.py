@@ -109,7 +109,7 @@ def main():
 def explain(e):
     msg = f"{type(e).__name__}: {e}"
     if "out of memory" in msg.lower():
-        return "显存不够（是不是 llm 之类的也在用显卡？）：" + msg
+        return "显存不够（是不是别的程序也在用显卡？）：" + msg
     return msg
 
 

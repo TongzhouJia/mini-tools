@@ -7,7 +7,7 @@
 //	描述  用一句话描述一个声音（「低沉沙哑的中年男人」），试听满意就存下来
 //
 // 模型真正跑在一个 Python 子进程里（worker.py，嵌在二进制里），有活才起，
-// 闲 -idle 这么久就杀掉：它装着模型时一直占 4~5G 显存，不放掉的话 llm 就起不来了。
+// 闲 -idle 这么久就杀掉：它装着模型时一直占 5G 左右显存，不放掉别的程序就用不上显卡。
 // 一个子进程只装一种模型，念预设音色和念自己的声音用的是两个模型，来回换要等十几秒。
 package main
 
@@ -130,7 +130,7 @@ const usage = `tts —— 本地语音合成（Qwen3-TTS 1.7B，跑在本机显�
 显卡和显存：
   模型在 Python 子进程里跑，有活才起，闲 -idle 就退出，显存（4~5G）跟着放掉
   第一次念、换了声音种类（预设 <-> 自己的）、或者闲置之后，要先等十几秒装模型
-  llm 占着显卡时装不下，页面上会报「显存不够」
+  显卡被别的程序占满时装不下，页面上会报「显存不够」（本地翻译 :8093 只占 1.7G，能同时放下）
 
 东西在哪：
   程序和 Python 环境   ~/.local/share/tts/（venv/、worker.py）
@@ -752,7 +752,7 @@ func (w *worker) died() error {
 	w.smu.Unlock()
 	w.stop("")
 	if strings.Contains(strings.ToLower(tail), "out of memory") {
-		return fmt.Errorf("显存不够（是不是 llm 之类的也在用显卡？）\n%s", tail)
+		return fmt.Errorf("显存不够（是不是别的程序也在用显卡？）\n%s", tail)
 	}
 	return fmt.Errorf("合成进程挂了：\n%s", tail)
 }
