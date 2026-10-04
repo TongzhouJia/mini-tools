@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,7 +104,7 @@ func main() {
 	fmt.Println("  Ctrl+C 退出")
 
 	go laterLoop(*mailTo)
-	log.Fatal(http.Serve(ln, logged(mux)))
+	log.Fatal(http.Serve(ln, cors(logged(mux))))
 }
 
 func usage() {
@@ -262,6 +263,35 @@ func logged(h http.Handler) http.Handler {
 			log.Printf("%s %s %s -> %d", clientIP(r), r.Method, r.URL.Path, fw.status)
 		}
 	})
+}
+
+// cors 放行同一台电脑上别的端口的页面：安卓 App「语音剪贴板」的页面挂在 voice_clip（:8092）的源上，
+// 调这边算跨域。只认主机名跟本次请求 Host 一样的 Origin，外面的网站照样读不到。
+func cors(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Origin")
+		if o := r.Header.Get("Origin"); o != "" && sameHost(o, r.Host) {
+			w.Header().Set("Access-Control-Allow-Origin", o)
+			if r.Method == http.MethodOptions { // 预检：POST JSON、带上传进度的 XHR 都会先来这一下
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func sameHost(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return u.Hostname() != "" && u.Hostname() == strings.Trim(host, "[]")
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
