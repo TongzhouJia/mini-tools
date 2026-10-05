@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	_ "embed"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -12,35 +13,54 @@ import (
 	"strings"
 )
 
-const usage = `audio_transcriber —— 音视频转文字（whisper.cpp，有独显就走 CUDA）
+const usage = `audio_transcriber —— 音视频转文字（默认 whisper.cpp；-qwen 换 Qwen3-ASR；-spk 分说话人）
 
 用法：
-  audio_transcriber              交互式：提示你输入文件夹，批量转里面所有音视频
-  audio_transcriber -f xxx.mp3   只转这一个文件（mp3 / mp4 都行）
+  audio_transcriber                    交互式：提示你输入文件夹，批量转里面所有音视频
+  audio_transcriber -f xxx.mp3         只转这一个文件（mp3 / mp4 都行）
+  audio_transcriber -qwen -f xxx.mp3   用 Qwen3-ASR 转（中文、唱歌、吵的录音明显更准；日语 whisper 略好）
+  audio_transcriber -spk -f xxx.mp3    转完再分说话人（已经转过的只补分人这一步）
 
-产物（跟源文件同目录、同名，一次出两个）：
-  xxx.txt   整篇纯文本
-  xxx.srt   带时间轴的字幕
+产物（跟源文件同目录、同名）：
+  xxx.txt            整篇纯文本
+  xxx.srt            带时间轴的字幕
+  xxx.speakers.txt   加了 -spk 才有：按说话人分段，「[00:01:23] A：……」
 
 行为：
-  断点续传 —— 同名 .txt 已存在就跳过，中断了直接重跑，不会白干
-  默认带防死循环参数（-mc 0 + VAD），没它会有整集被重复行刷屏且退出码照样是 0
+  断点续传 —— 同名 .txt 已存在就不再转写（-spk 时再看 .speakers.txt），中断了直接重跑
+  whisper 默认带防死循环参数（-mc 0 + VAD），没它会有整集被重复行刷屏且退出码照样是 0
   实测 RTX 4060 + large-v3 约 19 倍速（1 小时音频约 3 分半）
+  -qwen / -spk 跑在 Python 子进程里，要占显卡；本地朗读开着时显存可能不够，会提示怎么放
 
 依赖：ffmpeg、whisper-cli（whisper.cpp）、silero VAD 模型（缺了会自动退回不带 VAD）
+      -qwen / -spk 另要 ~/.local/share/asr 里的 Python 环境和模型
 环境变量：
   WHISPER_MODEL      模型文件路径（默认 ~/ggml-large-v3.bin）
   WHISPER_BIN        whisper 可执行文件（默认 whisper-cli）
   WHISPER_VAD_MODEL  VAD 模型（默认 ~/ggml-silero-v5.1.2.bin）
+  ASR_PYTHON         -qwen / -spk 用的 Python（默认 ~/.local/share/asr/venv/bin/python）
+  QWEN_ASR_MODEL     Qwen3-ASR 模型目录（默认 ~/.local/share/asr/models/Qwen3-ASR-1.7B）
+  QWEN_ALIGNER_MODEL 对时间轴的模型目录（默认 ~/.local/share/asr/models/Qwen3-ForcedAligner-0.6B）
+  QWEN_ASR_LANG      强制语种（Chinese / Japanese / English…），不设就自动认
+  SPK_MODEL          分说话人模型目录（默认 ~/.local/share/asr/models/speaker-diarization-community-1）
 
 参数：
 `
 
+//go:embed asr_worker.py
+var workerSrc string
+
 // 模型路径和 whisper 可执行文件都可以用环境变量覆盖。
 var (
-	modelPath  = envOr("WHISPER_MODEL", defaultPath("ggml-large-v3.bin"))
-	whisperBin = envOr("WHISPER_BIN", "whisper-cli")
-	vadModel   = envOr("WHISPER_VAD_MODEL", defaultPath("ggml-silero-v5.1.2.bin"))
+	modelPath   = envOr("WHISPER_MODEL", defaultPath("ggml-large-v3.bin"))
+	whisperBin  = envOr("WHISPER_BIN", "whisper-cli")
+	vadModel    = envOr("WHISPER_VAD_MODEL", defaultPath("ggml-silero-v5.1.2.bin"))
+	asrPython   = envOr("ASR_PYTHON", defaultPath(".local", "share", "asr", "venv", "bin", "python"))
+	qwenModel   = envOr("QWEN_ASR_MODEL", defaultPath(".local", "share", "asr", "models", "Qwen3-ASR-1.7B"))
+	alignModel  = envOr("QWEN_ALIGNER_MODEL", defaultPath(".local", "share", "asr", "models", "Qwen3-ForcedAligner-0.6B"))
+	workerPath  = defaultPath(".local", "share", "asr", "asr_worker.py")
+	useQwen     bool
+	withSpeaker bool
 )
 
 // envOr 取环境变量，为空时回退到默认值。
@@ -65,11 +85,33 @@ func checkDeps() error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return fmt.Errorf("❌ 找不到 ffmpeg，请先安装（用于抽取音轨）")
 	}
-	if _, err := exec.LookPath(whisperBin); err != nil {
-		return fmt.Errorf("❌ 找不到 %s，请先安装 whisper.cpp，或用 WHISPER_BIN 指定可执行文件路径", whisperBin)
+	if useQwen {
+		for _, p := range []string{qwenModel, alignModel} {
+			if _, err := os.Stat(p); err != nil {
+				return fmt.Errorf("❌ 找不到 Qwen 模型目录: %s", p)
+			}
+		}
+	} else {
+		if _, err := exec.LookPath(whisperBin); err != nil {
+			return fmt.Errorf("❌ 找不到 %s，请先安装 whisper.cpp，或用 WHISPER_BIN 指定可执行文件路径", whisperBin)
+		}
+		if _, err := os.Stat(modelPath); err != nil {
+			return fmt.Errorf("❌ 找不到模型文件: %s\n   用 WHISPER_MODEL 环境变量指定实际位置", modelPath)
+		}
 	}
-	if _, err := os.Stat(modelPath); err != nil {
-		return fmt.Errorf("❌ 找不到模型文件: %s\n   用 WHISPER_MODEL 环境变量指定实际位置", modelPath)
+	if useQwen || withSpeaker {
+		if _, err := os.Stat(asrPython); err != nil {
+			return fmt.Errorf("❌ 找不到 Python 环境: %s（用 ASR_PYTHON 指定）", asrPython)
+		}
+		// worker 嵌在二进制里，内容变了才重写，保证跟二进制是同一版
+		if old, err := os.ReadFile(workerPath); err != nil || string(old) != workerSrc {
+			if err := os.MkdirAll(filepath.Dir(workerPath), 0o755); err != nil {
+				return fmt.Errorf("❌ 建目录失败: %w", err)
+			}
+			if err := os.WriteFile(workerPath, []byte(workerSrc), 0o644); err != nil {
+				return fmt.Errorf("❌ 写 %s 失败: %w", workerPath, err)
+			}
+		}
 	}
 	return nil
 }
@@ -81,6 +123,8 @@ func main() {
 		flag.PrintDefaults()
 	}
 	singleFile := flag.String("f", "", "只处理这一个音视频文件（给了就跳过交互式输入文件夹）")
+	flag.BoolVar(&useQwen, "qwen", false, "用 Qwen3-ASR 转写（默认 whisper）")
+	flag.BoolVar(&withSpeaker, "spk", false, "转写之后再分说话人，多出 .speakers.txt")
 	flag.Parse()
 
 	if err := checkDeps(); err != nil {
@@ -168,36 +212,73 @@ func process(files []string) {
 		fmt.Printf("[%d/%d] %s\n", i+1, len(files), filepath.Base(inputPath))
 
 		outputBase := strings.TrimSuffix(inputPath, filepath.Ext(inputPath))
-		// 断点续传：如果已经有写好的 .txt，直接跳过
-		if _, err := os.Stat(outputBase + ".txt"); err == nil {
+		// 断点续传：已经有写好的 .txt 就不再转写；-spk 时再看分人结果在不在
+		needText := !exists(outputBase + ".txt")
+		needSpeaker := withSpeaker && !exists(outputBase+".speakers.txt")
+		if !needText && !needSpeaker {
 			fmt.Printf("⏭️  已存在文本，跳过：%s.txt\n\n", outputBase)
 			skipped++
 			continue
 		}
 
-		if err := transcribe(inputPath, outputBase); err != nil {
-			fmt.Printf("❌ 处理失败: %v\n\n", err)
+		if err := handle(inputPath, outputBase, needText, needSpeaker); err != nil {
+			fmt.Printf("处理失败: %v\n\n", err)
 			failed++
 			continue
 		}
 
-		fmt.Printf("✅ 完成：%s.txt / .srt\n\n", outputBase)
+		if needSpeaker {
+			fmt.Printf("完成：%s.speakers.txt\n\n", outputBase)
+		} else {
+			fmt.Printf("✅ 完成：%s.txt / .srt\n\n", outputBase)
+		}
 		done++
 	}
 
 	fmt.Printf("全部结束。成功 %d 个，跳过 %d 个，失败 %d 个。\n", done, skipped, failed)
 }
 
-// transcribe 提取音频并语音转文字，输出到 outputBase + ".txt"
-func transcribe(inputPath, outputBase string) error {
-	// 1. 用 ffmpeg 转成 whisper 需要的 16kHz 单声道 WAV（同时支持 mp3 / mp4）
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// handle 抽一次音轨，按需转写、分说话人。
+func handle(inputPath, outputBase string, needText, needSpeaker bool) error {
+	wavPath, err := extractWav(inputPath)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(wavPath)
+
+	if needText {
+		if useQwen {
+			fmt.Println("正在用 Qwen3-ASR 转文字...")
+			err = runWorker("asr", wavPath, outputBase)
+		} else {
+			err = transcribe(wavPath, outputBase)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if needSpeaker {
+		fmt.Println("正在分说话人...")
+		if err := runWorker("spk", wavPath, outputBase); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractWav 用 ffmpeg 转成 16kHz 单声道 WAV（同时支持 mp3 / mp4），返回临时文件路径。
+func extractWav(inputPath string) (string, error) {
 	wavFile, err := os.CreateTemp("", "audio_transcriber_*.wav")
 	if err != nil {
-		return fmt.Errorf("创建临时文件失败: %w", err)
+		return "", fmt.Errorf("创建临时文件失败: %w", err)
 	}
 	wavPath := wavFile.Name()
 	wavFile.Close()
-	defer os.Remove(wavPath)
 
 	fmt.Println("⏳ 正在提取音频...")
 	ffmpegCmd := exec.Command("ffmpeg",
@@ -211,10 +292,34 @@ func transcribe(inputPath, outputBase string) error {
 	)
 	ffmpegCmd.Stderr = os.Stderr
 	if err := ffmpegCmd.Run(); err != nil {
-		return fmt.Errorf("音频提取失败: %w", err)
+		os.Remove(wavPath)
+		return "", fmt.Errorf("音频提取失败: %w", err)
 	}
+	return wavPath, nil
+}
 
-	// 2. 用 whisper-cli 识别，输出与原文件同名的 .txt（纯文本）和 .srt（带时间轴的字幕）
+// runWorker 调 Python 子进程（Qwen3-ASR 转写 / pyannote 分说话人）。
+func runWorker(mode, wavPath, outputBase string) error {
+	cmd := exec.Command(asrPython, workerPath, mode, wavPath, outputBase)
+	cmd.Env = append(os.Environ(),
+		"QWEN_ASR_MODEL="+qwenModel,
+		"QWEN_ALIGNER_MODEL="+alignModel,
+		"HF_HUB_OFFLINE=1",
+		"TRANSFORMERS_VERBOSITY=error",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if mode == "spk" {
+			return fmt.Errorf("分说话人失败: %w", err)
+		}
+		return fmt.Errorf("语音转文字失败: %w", err)
+	}
+	return nil
+}
+
+// transcribe 用 whisper-cli 识别，输出与原文件同名的 .txt（纯文本）和 .srt（带时间轴的字幕）
+func transcribe(wavPath, outputBase string) error {
 	fmt.Println("🗣️  正在语音转文字...")
 	args := []string{
 		"-m", modelPath,
