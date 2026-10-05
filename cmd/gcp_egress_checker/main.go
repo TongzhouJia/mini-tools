@@ -551,7 +551,14 @@ func render(r *report) {
 		for _, d := range days {
 			peak = math.Max(peak, d.GiB)
 		}
-		fmt.Printf("\n📊 最近 %d 天\n", len(days))
+		// 日期是账单时区的，北京时间下午才换天，不标出来会把当天下午的流量当成前一天的
+		cut := ""
+		if loc, err := time.LoadLocation(tzName); err == nil {
+			t := time.Now().In(loc)
+			mid := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc).Local()
+			cut = fmt.Sprintf("（日期按美西算，北京时间每天 %d 点才换天）", mid.Hour())
+		}
+		fmt.Printf("\n📊 最近 %d 天%s\n", len(days), cut)
 		for _, d := range days {
 			n := 0
 			if peak > 0 {
