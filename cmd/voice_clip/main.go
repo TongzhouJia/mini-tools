@@ -158,7 +158,9 @@ func usage() {
   改位置用 -data 或环境变量 VOICE_CLIP_DATA_DIR。
 
 依赖什么:
-  wl-copy（wl-clipboard 包）    写 Wayland 剪贴板，必需
+  python3 + python3-gi（GTK3）  写剪贴板的主路：从 XWayland 那边写，不用抢焦点
+  wl-copy（wl-clipboard 包）    兜底，XWayland 那条走不通才用。它在 GNOME 上要讨焦点，
+                                偶尔讨不到就挂在底部 Dock 上等人点一下才写进去
   notify-send（libnotify-bin）  弹桌面通知，可选，没有就自动跳过
   gtasks                        建 Google 任务用，只有点「+」时才需要。
                                 装在 ~/.local/bin，systemd 的 PATH 不含这个目录，
@@ -166,9 +168,10 @@ func usage() {
 
 坑:
   - 剪贴板会被覆盖。每发一段就盖掉你当前复制的东西，发之前先把手头要粘的粘完。
-  - Wayland 的剪贴板是「由某个进程持有」的，所以 wl-copy 是套 setsid 起的，
-    本服务退出后剪贴板内容仍然在。但如果用 systemd 管理，单元里要写
-    KillMode=process，否则重启服务会连带把 wl-copy 杀掉，剪贴板立刻变空。
+  - 剪贴板是「由某个进程持有」的：每发一段，x11copy（或 wl-copy）就留一个后台
+    进程守着，别人复制了新东西它自己退。它们都脱离了本服务的进程组，本服务退出后
+    剪贴板内容仍然在。但如果用 systemd 管理，单元里要写 KillMode=process，
+    否则重启服务会连带把它杀掉，剪贴板立刻变空。
   - 默认监听 0.0.0.0 且没有密码，同一局域网里谁都能往你剪贴板塞东西。
     在外面的网络（咖啡馆、公司）别开，或者加 -local。
   - 手机如果挂着代理（Clash 之类），确认 192.168 段是直连，否则连不上。
@@ -424,35 +427,83 @@ func sessionEnv() []string {
 	return env
 }
 
-// copyToClipboard 把文字写进剪贴板，失败重试一次。
+// x11Env 在 sessionEnv 的基础上补 DISPLAY 和 XAUTHORITY，给 x11copy.py 连 XWayland。
+// 服务比桌面会话起得早，环境里多半没这俩；XAUTHORITY 的文件名每次登录都换，
+// 所以每次现找，不能启动时记死。
+func x11Env() []string {
+	env := sessionEnv()
+	if os.Getenv("DISPLAY") == "" {
+		env = append(env, "DISPLAY=:0")
+	}
+	if a := os.Getenv("XAUTHORITY"); a != "" {
+		if _, err := os.Stat(a); err == nil {
+			return env
+		}
+	}
+	if a := xwaylandAuth(); a != "" {
+		env = append(env, "XAUTHORITY="+a) // 重复的键以最后一个为准
+	}
+	return env
+}
+
+// xwaylandAuth 找 mutter 给 XWayland 生成的授权文件，有好几个就挑最新的。
+func xwaylandAuth() string {
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	if rt == "" {
+		return ""
+	}
+	matches, _ := filepath.Glob(filepath.Join(rt, ".mutter-Xwaylandauth.*"))
+	best, bestTime := "", time.Time{}
+	for _, m := range matches {
+		if st, err := os.Stat(m); err == nil && st.ModTime().After(bestTime) {
+			best, bestTime = m, st.ModTime()
+		}
+	}
+	return best
+}
+
+//go:embed x11copy.py
+var x11copyPy string
+
+// copyToClipboard 把文字写进剪贴板：先走 XWayland，不行再用 wl-copy。
 //
-// 实测偶尔会卡一下（接管别的程序持有的剪贴板内容时，比如 Nautilus 剪切文件
-// 留下的 application/x-trash），重试立刻就好。写剪贴板是幂等的，多写一次没有
-// 副作用，所以重试是白捡的。
+// wl-copy 在 GNOME 上得先讨到键盘焦点才能写（本机 mutter 没有 data-control
+// 协议），它会开个看不见的小窗去要。GNOME 偶尔不给，小窗就挂在底部 Dock 上
+// 等人点，点了才写进去——手机上看就是「发过去没反应，得去电脑上点一下」，
+// 日志里是「wl-copy 超时没返回」。X11 认剪贴板主人不看焦点，mutter 会把它
+// 同步成整个桌面的剪贴板，所以主路走 XWayland（x11copy.py），不碰焦点。
 func copyToClipboard(text string) error {
-	err := copyOnce(text)
+	py := "/usr/bin/python3" // python3-gi 只装在系统自带的这个上
+	if _, err := os.Stat(py); err != nil {
+		py = "python3"
+	}
+	err := runCopier(text, "XWayland", x11Env(), py, "-I", "-c", x11copyPy)
 	if err == nil {
 		return nil
 	}
-	log.Printf("写剪贴板失败，重试一次：%v", err)
-	time.Sleep(300 * time.Millisecond)
-	return copyOnce(text)
-}
+	log.Printf("走 XWayland 写剪贴板失败，改用 wl-copy：%v", err)
 
-// copyOnce 调一次 wl-copy。两处讲究，少一处都不行：
-//
-//  1. 套一层 setsid。Wayland 的剪贴板内容是由进程持有的，wl-copy 会 fork 一个
-//     后台进程一直守着。不脱离进程组的话，本服务被 Ctrl+C 或 systemd 停掉时会
-//     连它一起收走，剪贴板瞬间变空。
-//  2. 三个标准流全部用真文件，不能用 bytes.Buffer / strings.Reader。那两个会让
-//     Go 建管道，而 wl-copy fork 出来的守护进程继承了管道写端并且永不关闭，
-//     cmd.Run() 就永远等不到 EOF——实测必定卡死，请求再也回不来。
-func copyOnce(text string) error {
 	wlcopy, err := exec.LookPath("wl-copy")
 	if err != nil {
 		return fmt.Errorf("找不到 wl-copy：%v", err)
 	}
+	// 套一层 setsid：wl-copy 会 fork 一个后台进程守着剪贴板内容，不脱离进程组的话，
+	// 本服务被 Ctrl+C 或 systemd 停掉时会连它一起收走，剪贴板瞬间变空。
+	// （x11copy.py 自己会 setsid，不用套。）
+	name, args := wlcopy, []string{}
+	if setsid, err := exec.LookPath("setsid"); err == nil {
+		name, args = setsid, []string{wlcopy}
+	}
+	args = append(args, "--type", "text/plain;charset=utf-8")
+	return runCopier(text, "wl-copy", sessionEnv(), name, args...)
+}
 
+// runCopier 跑一次写剪贴板的外部命令，文字从 stdin 喂进去。
+//
+// 三个标准流全部用真文件，不能用 bytes.Buffer / strings.Reader。那两个会让
+// Go 建管道，而写剪贴板的程序都会 fork 一个守护进程留着，它继承了管道写端并且
+// 永不关闭，cmd.Run() 就永远等不到 EOF——实测 wl-copy 必定卡死，请求再也回不来。
+func runCopier(text, label string, env []string, name string, args ...string) error {
 	in, err := os.CreateTemp("", "voice_clip-in-*")
 	if err != nil {
 		return fmt.Errorf("建不了临时文件：%v", err)
@@ -473,30 +524,24 @@ func copyOnce(text string) error {
 	defer os.Remove(out.Name())
 	defer out.Close()
 
-	name, args := wlcopy, []string{}
-	if setsid, err := exec.LookPath("setsid"); err == nil {
-		name, args = setsid, []string{wlcopy}
-	}
-	args = append(args, "--type", "text/plain;charset=utf-8")
-
-	// 加个超时兜底，万一 wl-copy 真卡住也别把 HTTP 请求一起挂死
+	// 加个超时兜底，万一真卡住也别把 HTTP 请求一起挂死
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = sessionEnv()
+	cmd.Env = env
 	cmd.Stdin = in
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
 		msg, _ := os.ReadFile(out.Name())
 		if s := strings.TrimSpace(string(msg)); s != "" {
-			return fmt.Errorf("wl-copy 失败：%s", s)
+			return fmt.Errorf("%s 失败：%s", label, s)
 		}
 		if ctx.Err() != nil {
-			return fmt.Errorf("wl-copy 超时没返回")
+			return fmt.Errorf("%s 超时没返回", label)
 		}
-		return fmt.Errorf("wl-copy 失败：%v", err)
+		return fmt.Errorf("%s 失败：%v", label, err)
 	}
 	return nil
 }
