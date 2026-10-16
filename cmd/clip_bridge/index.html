@@ -68,7 +68,7 @@
     <textarea id="text" placeholder="粘贴或输入文字，Ctrl+Enter 发送。图片可以直接粘进来。"></textarea>
     <div class="row">
       <button class="primary" id="sendText">发送文字</button>
-      <span class="hint">发出去的内容两边都看得到</span>
+      <span class="hint" id="keepHint">发出去的内容两边都看得到</span>
     </div>
   </div>
 
@@ -164,6 +164,7 @@ async function refresh(){
     const sig = JSON.stringify(j.items.map(i=>i.id));
     cache = j.items;
     const w = $('#laterErr'); w.textContent = j.laterErr || ''; w.hidden = !j.laterErr;
+    $('#keepHint').textContent = '发出去的内容两边都看得到' + (j.keepHours > 0 ? '，' + j.keepHours + ' 小时后自动删' : '');
     if(sig !== lastSig){ lastSig = sig; render(j.items); }
   }catch(e){ /* 手机息屏回来会失败一次，忽略 */ }
 }

@@ -58,10 +58,12 @@ func main() {
 	dir := flag.String("data", defaultData, "数据目录（文件和记录都存这里）")
 	local := flag.Bool("local", false, "只监听 127.0.0.1（手机就连不上了，仅本机自用时才加）")
 	mailTo := flag.String("to", "", "发邮件时的收件人，留空 = 发给自己")
+	ttl := flag.Duration("ttl", keepFor, "传上来多久以后自动删（跟点「删除」一样，文件一起删），0 = 永不删")
 	flag.Usage = usage
 	flag.Parse()
 
 	dataDir = *dir
+	keepFor = *ttl
 	if err := os.MkdirAll(filepath.Join(dataDir, "files"), 0o755); err != nil {
 		log.Fatalf("建不了数据目录 %s：%v", dataDir, err)
 	}
@@ -71,6 +73,7 @@ func main() {
 	if err := loadJobs(); err != nil {
 		log.Fatalf("读不了「明天发邮件」的排期：%v", err)
 	}
+	purgeExpired()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
@@ -101,9 +104,17 @@ func main() {
 		}
 	}
 	fmt.Printf("  数据：   %s\n", dataDir)
+	if keepFor > 0 {
+		fmt.Printf("  过期：   传上来 %s 后自动删\n", keepFor)
+	}
 	fmt.Println("  Ctrl+C 退出")
 
 	go laterLoop(*mailTo)
+	go func() {
+		for range time.Tick(time.Minute) {
+			purgeExpired()
+		}
+	}()
 	log.Fatal(http.Serve(ln, cors(logged(mux))))
 }
 
@@ -122,6 +133,7 @@ func usage() {
   clip_bridge -local         只监听 127.0.0.1（手机连不上，仅本机自用）
   clip_bridge -to a@b.com    发邮件时寄给别人，默认发给自己
   clip_bridge -data ~/xxx    换数据目录
+  clip_bridge -ttl 48h       传上来多久以后自动删，默认 24h，0 = 永不删
 
 手机怎么连:
   电脑上打开页面，点右上角「二维码」，手机扫。要在同一个 Wi-Fi 下。
@@ -133,6 +145,8 @@ func usage() {
   排期   $HOME/.local/share/clip_bridge/later.json + later/<id>/（「明天发邮件」的快照，
          发完第二封自动删）
   可用 CLIP_BRIDGE_DATA_DIR 环境变量或 -data 改。页面上删除 = 连文件一起删。
+  传上来满 24 小时（-ttl）自动删，跟点「删除」一样：记录和文件都没了，别处不留备份。
+  点过「明天发邮件」的那份快照不受影响，照样按时发，发完第二封才删。
 
 依赖什么:
   发邮件要 gmail-send（~/.local/bin/gmail-send）。没装也能用，只是邮件按钮会报错。
@@ -140,7 +154,8 @@ func usage() {
 
 有哪些坑:
   - 默认监听 0.0.0.0 且没有密码，同一局域网里谁都能开。在外面的网络（咖啡馆、
-    公司网）别开着不管，用完 Ctrl+C。
+    公司网）别开着不管，用完 Ctrl+C。24 小时自动删就是为这个：万一被人摸到，
+    至少只看得到最近一天的。
   - 手机连的是 IP 不是域名，不受全局代理影响；连不上先确认两边在同一个 Wi-Fi。
   - Gmail 附件上限 25MB，超了邮件按钮会直接拒绝（文件本身照样能下载）。
   - 「明天发邮件」点的时候就把文件硬链接了一份，之后在页面上删掉这条也照样发。
@@ -209,15 +224,65 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
+// 过期的当作已经没了：后台每分钟才扫一次，这一分钟里也别让人按 id 拿到。
 func findItem(id string) (Item, bool) {
 	mu.Lock()
 	defer mu.Unlock()
+	now := time.Now()
 	for _, it := range items {
-		if it.ID == id {
+		if it.ID == id && !expired(it, now) {
 			return it, true
 		}
 	}
 	return Item{}, false
+}
+
+// 调用前必须持有 mu。删掉 drop 挑中的条目，是文件的连文件一起删。
+func removeItems(drop func(Item) bool) (int, error) {
+	var kept []Item
+	gone := 0
+	for _, it := range items {
+		if drop(it) {
+			if it.Type == "file" {
+				os.Remove(filePath(it))
+			}
+			gone++
+			continue
+		}
+		kept = append(kept, it)
+	}
+	if gone == 0 {
+		return 0, nil
+	}
+	items = kept
+	return gone, saveItems()
+}
+
+// ---------- 过期自动删 ----------
+
+// keepFor：传上来多久以后自动删（-ttl）。2026-10-16 他要的：端口开在局域网又没密码，
+// 万一被蹭网的摸到，至少只看得到最近一天的东西。
+var keepFor = 24 * time.Hour
+
+func expired(it Item, now time.Time) bool {
+	return keepFor > 0 && now.Sub(time.Unix(it.Created, 0)) >= keepFor
+}
+
+// purgeExpired 跟点「删除」一样删，别处不留备份。启动时、每分钟、每次拉列表都跑一遍。
+// 「明天发邮件」点的时候已经拍了快照（later/），这里删了照样按时发。
+func purgeExpired() {
+	if keepFor <= 0 {
+		return
+	}
+	now := time.Now()
+	mu.Lock()
+	defer mu.Unlock()
+	gone, err := removeItems(func(it Item) bool { return expired(it, now) })
+	if err != nil {
+		log.Printf("过期的 %d 条删了，记录存不下：%v", gone, err)
+	} else if gone > 0 {
+		log.Printf("过期自动删了 %d 条", gone)
+	}
 }
 
 func filePath(it Item) string {
@@ -328,11 +393,13 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleList(w http.ResponseWriter, r *http.Request) {
+	purgeExpired()
 	mu.Lock()
 	out := make([]Item, len(items))
 	copy(out, items)
 	mu.Unlock()
-	writeJSON(w, map[string]any{"items": out, "mailLimit": gmailAttachLimit, "laterErr": laterWarning()})
+	writeJSON(w, map[string]any{"items": out, "mailLimit": gmailAttachLimit, "laterErr": laterWarning(),
+		"keepHours": keepFor.Hours()})
 }
 
 func handleText(w http.ResponseWriter, r *http.Request) {
@@ -485,20 +552,8 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var kept []Item
-	var gone int
-	for _, it := range items {
-		if req.All || it.ID == req.ID {
-			if it.Type == "file" {
-				os.Remove(filePath(it))
-			}
-			gone++
-			continue
-		}
-		kept = append(kept, it)
-	}
-	items = kept
-	if err := saveItems(); err != nil {
+	gone, err := removeItems(func(it Item) bool { return req.All || it.ID == req.ID })
+	if err != nil {
 		fail(w, 500, "存不下："+err.Error())
 		return
 	}
