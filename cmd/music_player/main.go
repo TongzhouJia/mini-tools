@@ -161,9 +161,11 @@ func (p *player) setLoop(loop bool) error {
 }
 
 type status struct {
-	Song   *Song `json:"song"` // 正在放的，null = 没在放
-	Paused bool  `json:"paused"`
-	Loop   bool  `json:"loop"`
+	Song   *Song    `json:"song"` // 正在放的，null = 没在放
+	Paused bool     `json:"paused"`
+	Loop   bool     `json:"loop"`
+	Pos    *float64 `json:"pos,omitempty"` // 放到第几秒（进度条用）；刚起来那一下 mpv 还报不出来
+	Dur    *float64 `json:"dur,omitempty"` // 整首几秒
 }
 
 func (p *player) status() status {
@@ -176,11 +178,27 @@ func (p *player) status() status {
 	}
 	s := pr.song
 	st.Song = &s
-	// 暂停状态每次问 mpv 本人，不自己记，免得两边对不上
-	if v, err := ipc(pr.sock, "get_property", "pause"); err == nil {
-		st.Paused, _ = v.(bool)
+	// 暂停、进度每次问 mpv 本人，不自己记，免得两边对不上
+	v := getProps(pr.sock, "pause", "time-pos", "duration")
+	st.Paused, _ = v["pause"].(bool)
+	if f, ok := v["time-pos"].(float64); ok {
+		st.Pos = &f
+	}
+	if f, ok := v["duration"].(float64); ok {
+		st.Dur = &f
 	}
 	return st
+}
+
+func (p *player) seek(pos float64) error {
+	p.mu.Lock()
+	pr := p.cur
+	p.mu.Unlock()
+	if pr == nil {
+		return errNotPlaying
+	}
+	_, err := ipc(pr.sock, "seek", pos, "absolute")
+	return err
 }
 
 var errNotPlaying = errors.New("现在没在放歌")
@@ -216,6 +234,41 @@ func ipc(sock string, cmd ...any) (any, error) {
 		return nil, err
 	}
 	return nil, io.ErrUnexpectedEOF
+}
+
+// getProps 一个连接里问好几个属性，问不到的（比如刚起来还没有 duration）就不在结果里。
+func getProps(sock string, names ...string) map[string]any {
+	out := map[string]any{}
+	c, err := net.DialTimeout("unix", sock, time.Second)
+	if err != nil {
+		return out
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	var buf []byte
+	for i, n := range names {
+		b, _ := json.Marshal(map[string]any{"command": []any{"get_property", n}, "request_id": i + 1})
+		buf = append(append(buf, b...), '\n')
+	}
+	if _, err := c.Write(buf); err != nil {
+		return out
+	}
+	sc := bufio.NewScanner(c)
+	for got := 0; got < len(names) && sc.Scan(); {
+		var resp struct {
+			Error     string `json:"error"`
+			Data      any    `json:"data"`
+			RequestID int    `json:"request_id"`
+		}
+		if json.Unmarshal(sc.Bytes(), &resp) != nil || resp.RequestID < 1 || resp.RequestID > len(names) {
+			continue // mpv 自己广播的事件
+		}
+		got++
+		if resp.Error == "success" {
+			out[names[resp.RequestID-1]] = resp.Data
+		}
+	}
+	return out
 }
 
 func runtimeDir() string {
@@ -340,6 +393,28 @@ func handlePause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, p.status())
 }
 
+func handleSeek(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pos *float64 `json:"pos"`
+	}
+	if !readBody(w, r, &req) {
+		return
+	}
+	if req.Pos == nil || *req.Pos < 0 {
+		fail(w, 400, "要给 pos（第几秒）")
+		return
+	}
+	if err := p.seek(*req.Pos); err != nil {
+		code := 500
+		if errors.Is(err, errNotPlaying) {
+			code = 409
+		}
+		fail(w, code, err.Error())
+		return
+	}
+	writeJSON(w, p.status())
+}
+
 func handleStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, 405, "只收 POST")
@@ -425,7 +500,7 @@ func usage() {
 干什么:
   列出音乐目录里的歌（按拼音排），点一首就用 mpv 在这台电脑上放。
   一首放完就停，不会自动下一首；开了「单曲循环」就一直放这一首（换歌也照样循环）。
-  能暂停 / 接着放 / 停止。手机上的「语音剪贴板」App 左上角「点歌」就是调它。
+  能暂停 / 接着放 / 停止 / 拖进度条。手机上的「语音剪贴板」App 左上角「点歌」就是调它。
 
 怎么调:
   music_player                起服务，默认 :8082，监听 0.0.0.0（手机能连）
@@ -436,9 +511,11 @@ func usage() {
 
 接口（App 用的）:
   GET  /api/songs    歌单 + 现在的状态
-  GET  /api/status   {"song": 正在放的或 null, "paused": 是否暂停, "loop": 单曲循环开没开}
+  GET  /api/status   {"song": 正在放的或 null, "paused": 是否暂停, "loop": 单曲循环开没开,
+                      "pos": 放到第几秒, "dur": 整首几秒}（没在放就没有 pos/dur）
   POST /api/play     {"file": "庐州月 - 许嵩.flac"}（相对音乐目录）
   POST /api/pause    {"pause": true / false}
+  POST /api/seek     {"pos": 83.5}（跳到第几秒）
   POST /api/stop
   POST /api/loop     {"loop": true / false}
 
@@ -481,6 +558,7 @@ func main() {
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/play", handlePlay)
 	mux.HandleFunc("/api/pause", handlePause)
+	mux.HandleFunc("/api/seek", handleSeek)
 	mux.HandleFunc("/api/stop", handleStop)
 	mux.HandleFunc("/api/loop", handleLoop)
 
