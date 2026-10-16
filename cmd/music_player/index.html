@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>点歌台</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --fg: #16181d; --dim: #6b7280; --faint: #9ca3af;
+    --line: #e5e7eb; --accent: #2563eb; --accent-soft: rgba(37, 99, 235, .10); --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --card: #1c1f24; --fg: #e8eaed; --dim: #9aa1ab; --faint: #6b7280;
+      --line: #2c3037; --accent: #4d8ef7; --accent-soft: rgba(77, 142, 247, .16); --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0 auto; max-width: 620px; padding: 0 14px 30px;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 2; background: var(--bg);
+    padding: 14px 2px 12px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+  }
+  h1 { margin: 0; font-size: 18px; font-weight: 650; }
+  #now { margin-top: 4px; font-size: 14px; color: var(--dim); min-height: 21px;
+         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctrls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    border-radius: 9px; padding: 7px 14px;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  label { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 14px; color: var(--dim); cursor: pointer; }
+  input[type=checkbox] { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+  .song {
+    display: block; width: 100%; text-align: left; margin-bottom: 6px;
+    padding: 10px 13px; border-radius: 11px; font-weight: 400;
+  }
+  .song b { display: block; font-size: 15px; font-weight: 600; word-break: break-word; }
+  .song small { display: block; font-size: 12px; color: var(--dim); }
+  .song.on { border-color: var(--accent); background: var(--accent-soft); }
+  .song.on b { color: var(--accent); }
+  #err { color: var(--err); font-size: 13px; margin: 0 2px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>点歌台</h1>
+  <div id="now">没在放</div>
+  <div class="ctrls">
+    <button id="pp" disabled>暂停</button>
+    <button id="stop" disabled>停止</button>
+    <label><input type="checkbox" id="loop"> 单曲循环</label>
+  </div>
+</header>
+<div id="err" hidden></div>
+<div id="list"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let st = { song: null, paused: false, loop: false }, songs = [];
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  } : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function err(msg) { $('#err').textContent = msg || ''; $('#err').hidden = !msg; }
+
+// 「歌名 - 歌手」拆成两行；B 站下的那些没有歌手
+function split(name) {
+  const i = name.lastIndexOf(' - ');
+  return i > 0 ? [name.slice(0, i), name.slice(i + 3)] : [name, ''];
+}
+
+function show() {
+  const s = st.song;
+  $('#now').textContent = s ? (st.paused ? '暂停中：' : '正在放：') + s.name : '没在放';
+  $('#pp').textContent = st.paused ? '接着放' : '暂停';
+  $('#pp').disabled = $('#stop').disabled = !s;
+  $('#loop').checked = st.loop;
+  for (const b of document.querySelectorAll('.song')) b.classList.toggle('on', !!s && b.dataset.file === s.file);
+}
+
+function render() {
+  const list = $('#list');
+  list.textContent = '';
+  for (const s of songs) {
+    const [title, artist] = split(s.name);
+    const b = document.createElement('button');
+    b.className = 'song';
+    b.dataset.file = s.file;
+    const t = document.createElement('b'); t.textContent = title; b.appendChild(t);
+    if (artist) { const a = document.createElement('small'); a.textContent = artist; b.appendChild(a); }
+    b.addEventListener('click', () => act('/api/play', { file: s.file }));
+    list.appendChild(b);
+  }
+  show();
+}
+
+async function act(path, body) {
+  try { st = await api(path, body); err(''); } catch (e) { err(e.message); }
+  show();
+}
+
+$('#pp').addEventListener('click', () => act('/api/pause', { pause: !st.paused }));
+$('#stop').addEventListener('click', () => act('/api/stop', {}));
+$('#loop').addEventListener('change', e => act('/api/loop', { loop: e.target.checked }));
+
+async function load() {
+  try { const j = await api('/api/songs'); songs = j.songs || []; st = j.status; err(''); render(); }
+  catch (e) { err('拿不到歌单：' + e.message); }
+}
+// 歌放完了会自己停，隔几秒同步一下
+setInterval(async () => { try { st = await api('/api/status'); show(); } catch (e) {} }, 3000);
+load();
+</script>
+</body>
+</html>
