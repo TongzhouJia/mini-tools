@@ -95,6 +95,7 @@ func main() {
 	mux.HandleFunc("/api/delete", handleDelete)
 	mux.HandleFunc("/api/lists", handleLists)
 	mux.HandleFunc("/api/task", handleTask)
+	mux.HandleFunc("/api/reminders", handleReminders)
 	mux.HandleFunc("/api/lan", handleLAN(*port))
 	mux.HandleFunc("/api/qr", handleQR)
 
@@ -152,6 +153,8 @@ func usage() {
     紧挨着它左边是列表选择器，选过一次就记住（存在浏览器 localStorage 里）。
     默认写进哪个列表用 -task-list 改，当前默认是 My Tasks。
   - 最近的历史记录。点任意一条 = 把它重新放回电脑剪贴板（剪贴板被别的东西盖掉时用）。
+  - （安卓 App 用）GET /api/reminders?list=名字：某个 Google Tasks 列表里没做完的条目，
+    App 在输入框空着时垫在底下显示。只读，谷歌那边拉一次要两三秒，所以缓存 1 分钟。
 
 产物落哪:
   历史记录 ~/.local/share/voice_clip/items.jsonl（一行一条 JSON，只留最近 200 条）
@@ -575,7 +578,7 @@ func logged(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fw := &flushWriter{ResponseWriter: w, status: 200}
 		h.ServeHTTP(fw, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/items" {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/items" && r.URL.Path != "/api/reminders" {
 			log.Printf("%s %s %s -> %d", clientIP(r), r.Method, r.URL.Path, fw.status)
 		}
 	})
@@ -767,6 +770,140 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("建任务到「%s」：%s", req.List, firstLine(text, 30))
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- 输入框空着时垫在底下的列表（App 里显示「正经折腾」）----------
+//
+// 只读：要改去 Google Tasks 里改，这里不提供任何写操作。
+// 谷歌那边拉一次要两三秒（走梯子），App 每 5 秒问一次，所以缓存着：
+// 超过 1 分钟就在后台重拉、问的人先拿旧的；只有第一次没缓存时才等它拉完。
+
+const reminderTTL = time.Minute
+
+type reminderCache struct {
+	items   []string
+	ok      bool      // 拉成功过
+	at      time.Time // 上一次拉完（成功失败都算）的时间，失败了也等满 1 分钟再试
+	loading bool
+	done    chan struct{}
+}
+
+var (
+	remMu    sync.Mutex
+	remCache = map[string]*reminderCache{}
+)
+
+// fetchReminders 拉一个列表里没做完的条目，顺序跟 Google Tasks 里手排的一样
+// （按 position；子任务跟在父任务后面）。标题空着的（长文字整段进了详情）取详情第一行。
+func fetchReminders(list string) ([]string, error) {
+	bin, err := findBin("gtasks")
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "ls", "--json", "--", list).Output()
+	if err != nil {
+		return nil, fmt.Errorf("gtasks ls 失败：%v", err)
+	}
+	var tasks []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Notes    string `json:"notes"`
+		Status   string `json:"status"`
+		Position string `json:"position"`
+		Parent   string `json:"parent"`
+		Deleted  bool   `json:"deleted"`
+	}
+	if err := json.Unmarshal(out, &tasks); err != nil {
+		return nil, fmt.Errorf("gtasks ls --json 读不懂：%v", err)
+	}
+	sort.SliceStable(tasks, func(i, j int) bool { return tasks[i].Position < tasks[j].Position })
+	kids := map[string][]int{}
+	var tops []int
+	for i, t := range tasks {
+		if t.Status != "needsAction" || t.Deleted {
+			continue
+		}
+		if t.Parent != "" {
+			kids[t.Parent] = append(kids[t.Parent], i)
+		} else {
+			tops = append(tops, i)
+		}
+	}
+	text := func(i int) string {
+		s := strings.TrimSpace(tasks[i].Title)
+		if s == "" {
+			s = firstLine(strings.TrimSpace(tasks[i].Notes), 200)
+		}
+		return s
+	}
+	items := []string{}
+	for _, i := range tops {
+		if s := text(i); s != "" {
+			items = append(items, s)
+		}
+		for _, k := range kids[tasks[i].ID] {
+			if s := text(k); s != "" {
+				items = append(items, "  "+s)
+			}
+		}
+	}
+	return items, nil
+}
+
+func reminders(list string) ([]string, error) {
+	remMu.Lock()
+	c := remCache[list]
+	if c == nil {
+		c = &reminderCache{}
+		remCache[list] = c
+	}
+	if !c.loading && time.Since(c.at) > reminderTTL {
+		c.loading = true
+		c.done = make(chan struct{})
+		go func(done chan struct{}) {
+			items, err := fetchReminders(list)
+			remMu.Lock()
+			if err != nil {
+				log.Printf("拉「%s」失败：%v", list, err)
+			} else {
+				c.items, c.ok = items, true
+			}
+			c.at, c.loading = time.Now(), false
+			remMu.Unlock()
+			close(done)
+		}(c.done)
+	}
+	ok, done := c.ok, c.done
+	remMu.Unlock()
+
+	if !ok && done != nil {
+		select {
+		case <-done:
+		case <-time.After(25 * time.Second):
+		}
+	}
+	remMu.Lock()
+	defer remMu.Unlock()
+	if !c.ok {
+		return nil, fmt.Errorf("还没从 Google Tasks 拉到「%s」", list)
+	}
+	return c.items, nil
+}
+
+func handleReminders(w http.ResponseWriter, r *http.Request) {
+	list := strings.TrimSpace(r.URL.Query().Get("list"))
+	if list == "" {
+		fail(w, 400, "要带 list")
+		return
+	}
+	items, err := reminders(list)
+	if err != nil {
+		fail(w, 502, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"items": items})
 }
 
 func handleLAN(port int) http.HandlerFunc {
