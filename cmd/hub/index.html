@@ -60,7 +60,7 @@
 
   <div class="grid" id="grid"></div>
 
-  <h2>项目目录（点一下复制路径）</h2>
+  <h2 id="repos-h">项目目录（点一下复制路径）</h2>
   <div id="repos"></div>
   <p class="hint" id="foot"></p>
 </div>
@@ -125,10 +125,12 @@ function render(d){
     </div>`;
   }).join('');
 
-  $('#repos').innerHTML = d.repos.map(r =>
+  const repos = d.repos || [];  // 清单清空时后端给的是 null
+  $('#repos').innerHTML = repos.map(r =>
     `<div class="repo"><b>${esc(r.name)}</b><span class="hint">${esc(r.desc)}</span>
       <span class="spacer"></span><code>${esc(r.path)}</code>
       <button class="mini" data-copy="${esc(r.path)}">复制</button></div>`).join('');
+  $('#repos-h').style.display = repos.length ? '' : 'none';
   $('#foot').textContent = onPhone
     ? '手机上只有标了「手机可用」的服务连得上，别的只监听电脑本机。'
     : '这些服务由 systemd 用户单元管着，登录桌面时自动起来。改清单：~/.config/hub/services.json，改完点刷新。';
