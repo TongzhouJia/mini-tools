@@ -35,6 +35,14 @@ type Action struct {
 	Manual  []string `json:"manual,omitempty"`  // # 手动: 一行一条
 	Cmd     string   `json:"cmd"`               // 终端里怎么跑
 	Running bool     `json:"running"`
+
+	// 开关类按钮（写了「# 开关: 单元名」）：没在跑时点一下＝跑这个脚本（开始），在跑时点一下＝跑「# 停止:」那个脚本。
+	// 在不在跑看 systemd 用户单元，所以页面关了再开、终端里开的都认得。
+	Unit     string `json:"unit,omitempty"`    // # 开关:
+	Stop     string `json:"-"`                 // # 停止:（同目录的脚本文件名）
+	StopCmd  string `json:"stopCmd,omitempty"` // 终端里怎么停
+	On       bool   `json:"on"`                // 单元在跑
+	Stopping bool   `json:"stopping"`          // 停的脚本正在跑
 }
 
 var (
@@ -44,7 +52,11 @@ var (
 	runMu   sync.Mutex
 	running = map[string]bool{}
 
-	headerRe = regexp.MustCompile(`^#\s*(按钮|分组|说明|确认|手动)\s*[:：]\s*(.*)$`)
+	// 分组的先后：常用的在前；没列在这里的排在后面、按名字排。
+	groupOrder = []string{"看广告领金币", "挖矿", "华为手机", "翻译朗读", "电脑", "梯子"}
+
+	headerRe = regexp.MustCompile(`^#\s*(按钮|分组|说明|确认|手动|开关|停止)\s*[:：]\s*(.*)$`)
+	unitRe   = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
 	ansiRe   = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
 	// 老工具输出里的符号 emoji（✅📊 这种）在页面上一律去掉
 	emojiRe = regexp.MustCompile(`[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}\x{2B50}\x{2B55}\x{FE0F}\x{200D}] ?`)
@@ -97,6 +109,14 @@ func usage() {
     # 说明: 一句话说干什么（可以写多行，会接起来）
     # 确认: 删了找不回来，确定？（写了就先弹确认框，删东西的必须写）
     # 手动: 不用脚本的话怎么弄（一行一条，可以写多行）
+
+  开关类按钮（点一下开始、再点一下停，比如后台看广告）再多写两行：
+    # 开关: hellobike-ads（systemd 用户单元名，在跑＝按钮显示红色「停」，没在跑＝绿色「开始」）
+    # 停止: hellobike-ads-stop.sh（同目录里停它的脚本，那个脚本自己不写「# 按钮:」）
+  开始脚本要认环境变量 OPS_FOLLOW=1：单元在跑就只跟进度，没在跑就直接退出、什么都不开。
+  页面打开时发现它在跑，会用这个方式自动接上进度。
+
+  分组的先后写在 main.go 的 groupOrder 里，没列的排在后面。
 
 产物落哪:
   不落盘。每次执行记一行到标准输出（交给 systemd 时在 journalctl --user -u hub-ops_panel）。
@@ -176,19 +196,43 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "没有这个按钮", http.StatusNotFound)
 		return
 	}
-	runMu.Lock()
-	if running[a.File] {
-		runMu.Unlock()
-		http.Error(w, "这个还在跑，等它跑完", http.StatusConflict)
+	// op：空＝执行（开关类就是「开始」）；stop＝跑停的那个脚本；follow＝只看进度（没在跑就什么都不做）
+	script, key := a.File, a.File
+	var extraEnv []string
+	switch op := r.URL.Query().Get("op"); op {
+	case "":
+	case "stop":
+		if a.Unit == "" {
+			http.Error(w, "这个按钮不是开关", http.StatusBadRequest)
+			return
+		}
+		script, key = a.Stop, a.File+"#stop"
+	case "follow":
+		if a.Unit == "" {
+			http.Error(w, "这个按钮不是开关", http.StatusBadRequest)
+			return
+		}
+		key = "" // 只是看进度，几个页面同时看也行，不占锁
+		extraEnv = []string{"OPS_FOLLOW=1"}
+	default:
+		http.Error(w, "不认识的 op："+op, http.StatusBadRequest)
 		return
 	}
-	running[a.File] = true
-	runMu.Unlock()
-	defer func() {
+	if key != "" {
 		runMu.Lock()
-		delete(running, a.File)
+		if running[key] {
+			runMu.Unlock()
+			http.Error(w, "这个还在跑，等它跑完", http.StatusConflict)
+			return
+		}
+		running[key] = true
 		runMu.Unlock()
-	}()
+		defer func() {
+			runMu.Lock()
+			delete(running, key)
+			runMu.Unlock()
+		}()
+	}
 
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -199,9 +243,9 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 
 	start := time.Now()
-	cmd := exec.CommandContext(r.Context(), "bash", filepath.Join(scriptsDir, a.File))
+	cmd := exec.CommandContext(r.Context(), "bash", filepath.Join(scriptsDir, script))
 	cmd.Dir = home
-	cmd.Env = withLocalBin(os.Environ())
+	cmd.Env = append(withLocalBin(os.Environ()), extraEnv...)
 	// 自成一个进程组：页面关了要连 adb、curl 这些子进程一起杀
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
@@ -254,7 +298,7 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	secs := time.Since(start).Seconds()
-	fmt.Printf("[%s] %s 退出码 %d（%.1f 秒）\n", time.Now().Format("01-02 15:04:05"), a.File, code, secs)
+	fmt.Printf("[%s] %s 退出码 %d（%.1f 秒）\n", time.Now().Format("01-02 15:04:05"), script, code, secs)
 	sendEvent(w, fl, "done", map[string]any{"code": code, "secs": secs})
 }
 
@@ -275,18 +319,71 @@ func scan() ([]Action, error) {
 		}
 		a.File = e.Name()
 		a.Cmd = "bash " + tilde(filepath.Join(scriptsDir, e.Name()))
+		// 开关要两样都对：单元名只许安全字符，停的脚本得是同目录里真有的文件；不对就当普通按钮
+		if a.Unit != "" {
+			st, err := os.Stat(filepath.Join(scriptsDir, a.Stop))
+			if !unitRe.MatchString(a.Unit) || a.Stop == "" || strings.ContainsAny(a.Stop, `/\`) || err != nil || st.IsDir() {
+				a.Unit, a.Stop = "", ""
+			} else {
+				a.StopCmd = "bash " + tilde(filepath.Join(scriptsDir, a.Stop))
+			}
+		}
 		runMu.Lock()
 		a.Running = running[a.File]
+		a.Stopping = running[a.File+"#stop"]
 		runMu.Unlock()
 		acts = append(acts, a)
 	}
+	markOn(acts)
 	sort.SliceStable(acts, func(i, j int) bool {
+		ri, rj := groupRank(acts[i].Group), groupRank(acts[j].Group)
+		if ri != rj {
+			return ri < rj
+		}
 		if acts[i].Group != acts[j].Group {
 			return acts[i].Group < acts[j].Group
 		}
 		return acts[i].File < acts[j].File
 	})
 	return acts, nil
+}
+
+func groupRank(g string) int {
+	for i, x := range groupOrder {
+		if x == g {
+			return i
+		}
+	}
+	return len(groupOrder)
+}
+
+// markOn 一次 systemctl 查完所有开关的单元在不在跑（一个单元一行，顺序跟参数一样）。
+// 正在起、正在停也算在跑：免得这时候再点一下又开一个。
+func markOn(acts []Action) {
+	var units []string
+	for _, a := range acts {
+		if a.Unit != "" {
+			units = append(units, a.Unit)
+		}
+	}
+	if len(units) == 0 {
+		return
+	}
+	out, _ := exec.Command("systemctl", append([]string{"--user", "is-active", "--"}, units...)...).Output()
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	k := 0
+	for i := range acts {
+		if acts[i].Unit == "" {
+			continue
+		}
+		if k < len(lines) {
+			switch strings.TrimSpace(lines[k]) {
+			case "active", "activating", "deactivating", "reloading", "refreshing":
+				acts[i].On = true
+			}
+		}
+		k++
+	}
 }
 
 func parseHeader(path string) (Action, bool) {
@@ -314,6 +411,10 @@ func parseHeader(path string) (Action, bool) {
 			a.Confirm = v
 		case "手动":
 			a.Manual = append(a.Manual, v)
+		case "开关":
+			a.Unit = v
+		case "停止":
+			a.Stop = v
 		}
 	}
 	if a.Group == "" {

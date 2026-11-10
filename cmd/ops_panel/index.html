@@ -5,45 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>常用操作</title>
 <style>
-  :root{--bg:#f6f7f9;--card:#fff;--line:#e3e6ea;--fg:#1c1f23;--dim:#6b7280;
+  :root{--bg:#f6f7f9;--card:#fff;--line:#e3e6ea;--fg:#1c1f23;--dim:#6b7280;--tile:#f3f5f8;
         --accent:#2f6df6;--ok:#1f9d55;--danger:#d64545;--code:#f1f3f6}
   @media (prefers-color-scheme:dark){
-    :root{--bg:#15171a;--card:#1e2126;--line:#2f343b;--fg:#e8eaed;--dim:#9aa2ad;
-          --accent:#4b83f7;--ok:#4cc38a;--danger:#e56b6b;--code:#262a30}
+    :root{--bg:#15171a;--card:#1e2126;--line:#2f343b;--fg:#e8eaed;--dim:#9aa2ad;--tile:#262a30;
+          --accent:#4b83f7;--ok:#2f9e63;--danger:#d45a5a;--code:#262a30}
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);padding:0 0 40px;
        font:15px/1.6 system-ui,-apple-system,"Noto Sans CJK SC","Microsoft YaHei",sans-serif}
-  .wrap{max-width:900px;margin:0 auto;padding:0 14px}
-  header{display:flex;align-items:baseline;gap:10px;padding:16px 0 6px;flex-wrap:wrap}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 14px}
+  header{display:flex;align-items:baseline;gap:10px;padding:16px 0 12px;flex-wrap:wrap}
   h1{font-size:20px;margin:0;font-weight:650}
-  h2{font-size:14px;font-weight:600;color:var(--dim);margin:22px 0 8px}
-  .spacer{flex:1}
   .hint{color:var(--dim);font-size:13px}
+  .spacer{flex:1}
   code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
   button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);
-         border-radius:8px;padding:5px 13px;cursor:pointer;flex:none}
-  button.run{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.run.danger{background:var(--danger);border-color:var(--danger)}
-  button.mini{padding:2px 9px;font-size:12.5px;border-radius:7px}
-  button:disabled{opacity:.6;cursor:default}
-  button:active:not(:disabled){transform:translateY(1px)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 13px;
-        margin-bottom:10px}
-  .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .name{font-weight:640;font-size:16px}
-  .desc{color:var(--dim);font-size:13.5px;margin-top:3px}
-  .how{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:14px}
-  .cmdrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .cmdrow code{background:var(--code);padding:3px 8px;border-radius:6px;word-break:break-all}
-  .how ul{margin:8px 0 6px;padding-left:20px}
+         border-radius:8px;padding:5px 13px;cursor:pointer}
+  button.mini{padding:1px 9px;font-size:12.5px;border-radius:7px}
+  button:disabled{cursor:default}
+
+  /* 一组一块，宽屏几块并排 */
+  .groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;align-items:start}
+  .group{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px 14px;min-width:0}
+  .group h2{font-size:15px;font-weight:650;margin:0 0 10px}
+
+  /* 组里的按钮排成格子 */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:8px}
+  .tile{position:relative;min-width:0}
+  .act{width:100%;min-height:62px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;
+       gap:1px;text-align:left;padding:8px 30px 8px 12px;border-radius:10px;background:var(--tile)}
+  .act:active:not(:disabled){transform:translateY(1px)}
+  .act .nm{font-weight:620;font-size:14.5px;line-height:1.35}
+  .act .sub{font-size:12.5px;opacity:.85;line-height:1.3}
+  .act.danger{color:var(--danger)}
+  .act.tg{color:#fff}
+  .act.tg.off{background:var(--ok);border-color:var(--ok)}   /* 没在跑：绿，点了开始 */
+  .act.tg.on{background:var(--danger);border-color:var(--danger)}  /* 在跑：红，点了停 */
+  .act:disabled{opacity:.6}
+  .q{position:absolute;top:6px;right:6px;width:21px;height:21px;padding:0;border-radius:50%;
+     font-size:12px;line-height:19px;text-align:center;background:transparent;color:var(--dim);border-color:currentColor;opacity:.75}
+  .tile.tg .q{color:#fff}
+
+  /* 怎么弄、输出：在格子下面展开 */
+  .how,.out{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:14px}
+  .how .t,.out .t{font-weight:620}
+  .how .desc{color:var(--dim);font-size:13.5px;margin:2px 0 6px}
+  .cmdrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0}
+  .cmdrow code{background:var(--code);padding:2px 8px;border-radius:6px;word-break:break-all}
+  .how ul{margin:6px 0;padding-left:20px}
   .how li{margin:2px 0}
-  pre{margin:8px 0 0;padding:9px 11px;background:var(--code);border-radius:8px;
+  .ohead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .st{font-size:13px}
+  .st.ok{color:var(--ok)} .st.bad{color:var(--danger)} .st.busy{color:var(--dim)}
+  pre{margin:6px 0 0;padding:8px 10px;background:var(--code);border-radius:8px;
       white-space:pre-wrap;word-break:break-all;line-height:1.5}
-  .status{font-size:13px;margin-top:6px}
-  .status.ok{color:var(--ok)}
-  .status.bad{color:var(--danger)}
-  .status.busy{color:var(--dim)}
   #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#000c;color:#fff;
          padding:9px 16px;border-radius:99px;font-size:14px;opacity:0;transition:opacity .2s;
          pointer-events:none;z-index:9;max-width:90vw;text-align:center}
@@ -56,12 +72,13 @@
     <h1>常用操作</h1>
     <span class="hint" id="dir"></span>
   </header>
-  <div id="list"></div>
+  <div id="groups" class="groups"></div>
 </div>
 <div id="toast"></div>
 
 <script>
 const $ = s => document.querySelector(s);
+const MAX_LINES = 120;  // 输出只留最后这么多行，看广告那种一跑几百行的不至于把页面拉得老长
 function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function toast(m){
   const t = $('#toast'); t.textContent = m; t.classList.add('on');
@@ -79,38 +96,68 @@ async function copy(txt){
   }
 }
 
-let acts = [];
+let acts = [], sig = '';
+const local = {};   // 按 file：这页上正在开 / 停 / 看进度的状态
+const L = f => local[f] || (local[f] = {starting:false, stopping:false, streams:0, lines:[], dropped:0, live:false});
+const anyStream = () => Object.values(local).some(s => s.streams > 0);
+const signature = list => list.map(a => [a.file,a.name,a.group,a.unit||'',a.confirm||''].join('|')).join('\n');
 
 function render(d){
-  acts = d.actions;
+  acts = d.actions; sig = signature(acts);
   $('#dir').textContent = '脚本都在 ' + d.dir;
-  if(!acts.length){
-    $('#list').innerHTML = '<p class="hint">脚本目录里还没有带「# 按钮:」的脚本。</p>';
-    return;
-  }
-  let html = '', group = null;
+  if(!acts.length){ $('#groups').innerHTML = '<p class="hint">脚本目录里还没有带「# 按钮:」的脚本。</p>'; return; }
+  const groups = [];
   acts.forEach((a, i) => {
-    if(a.group !== group){ group = a.group; html += `<h2>${esc(group)}</h2>`; }
-    const manual = (a.manual||[]).map(m=>`<li>${esc(m)}</li>`).join('');
-    html += `<div class="card" id="c${i}">
-      <div class="top">
-        <span class="name">${esc(a.name)}</span><span class="spacer"></span>
-        <button class="run ${a.confirm?'danger':''}" data-run="${i}" ${a.running?'disabled':''}>${a.running?'跑着…':'执行'}</button>
-        <button data-how="${i}">怎么弄</button>
-      </div>
-      <div class="desc">${esc(a.desc)}</div>
-      <div class="how" hidden>
-        <div class="cmdrow"><span>终端里跑：</span><code>${esc(a.cmd)}</code>
-          <button class="mini" data-copy="${i}">复制</button></div>
-        ${manual?`<ul>${manual}</ul>`:''}
-        <button class="mini" data-src="${i}">看脚本</button>
-        <pre class="src" hidden></pre>
-      </div>
-      <pre class="out" hidden></pre>
-      <div class="status"></div>
-    </div>`;
+    let g = groups[groups.length-1];
+    if(!g || g.name !== a.group){ g = {name:a.group, items:[]}; groups.push(g); }
+    g.items.push(i);
   });
-  $('#list').innerHTML = html;
+  $('#groups').innerHTML = groups.map(g => `<section class="group">
+      <h2>${esc(g.name)}</h2>
+      <div class="tiles">${g.items.map(i => `<div class="tile${acts[i].unit?' tg':''}" id="t${i}">
+          <button class="act" data-act="${i}"><span class="nm">${esc(acts[i].name)}</span><span class="sub"></span></button>
+          <button class="q" data-how="${i}" title="怎么弄">?</button>
+        </div>`).join('')}</div>
+      ${g.items.map(i => howHTML(i)).join('')}
+      ${g.items.map(i => `<div class="out" id="o${i}" hidden>
+          <div class="ohead"><span class="t">${esc(acts[i].name)}</span><span class="st"></span>
+            <span class="spacer"></span><button class="mini" data-close="${i}">收起</button></div>
+          <pre></pre></div>`).join('')}
+    </section>`).join('');
+  acts.forEach((a, i) => paint(i));
+}
+
+function howHTML(i){
+  const a = acts[i];
+  const manual = (a.manual||[]).map(m=>`<li>${esc(m)}</li>`).join('');
+  return `<div class="how" id="h${i}" hidden>
+    <div class="t">${esc(a.name)}</div>
+    <div class="desc">${esc(a.desc)}</div>
+    <div class="cmdrow"><span>${a.unit?'终端里开始：':'终端里跑：'}</span><code>${esc(a.cmd)}</code>
+      <button class="mini" data-copy="${i}">复制</button></div>
+    ${a.unit?`<div class="cmdrow"><span>终端里停：</span><code>${esc(a.stopCmd)}</code>
+      <button class="mini" data-copystop="${i}">复制</button></div>`:''}
+    ${manual?`<ul>${manual}</ul>`:''}
+    <button class="mini" data-src="${i}">看脚本</button>
+    <pre class="src" hidden></pre>
+  </div>`;
+}
+
+// 按钮的颜色和小字跟着状态走
+function paint(i){
+  const a = acts[i], s = L(a.file), b = $(`#t${i} .act`); if(!b) return;
+  const sub = b.querySelector('.sub');
+  if(a.unit){
+    const stopping = s.stopping || a.stopping;
+    b.className = 'act tg ' + (a.on || stopping ? 'on' : 'off');
+    b.disabled = stopping || s.starting;
+    sub.textContent = stopping ? '停着…' : s.starting ? '开始中…' : a.on ? '在跑 · 点一下停' : '点一下开始';
+  }else{
+    const busy = s.streams > 0 || a.running;
+    b.className = 'act' + (a.confirm ? ' danger' : '');
+    b.disabled = busy;
+    sub.textContent = busy ? '跑着…' : '';
+  }
 }
 
 async function load(){
@@ -119,24 +166,46 @@ async function load(){
     const j = await r.json();
     if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
     render(j);
-  }catch(e){ $('#list').innerHTML = `<p class="hint">拿不到按钮列表：${esc(e.message)}</p>`; }
+    acts.forEach((a, i) => { if(a.unit && a.on) follow(i); });
+  }catch(e){ $('#groups').innerHTML = `<p class="hint">拿不到按钮列表：${esc(e.message)}</p>`; }
 }
 
-async function run(i){
-  const a = acts[i], card = $('#c'+i);
-  const btn = card.querySelector('[data-run]'), out = card.querySelector('.out'), st = card.querySelector('.status');
-  if(a.confirm && !confirm(a.confirm)) return;
-  btn.disabled = true; btn.textContent = '跑着…';
-  out.hidden = false; out.textContent = '';
-  st.className = 'status busy'; st.textContent = '跑着…';
-  let live = null;  // 进度条那种原地刷新的行
-  const add = (t, isCR) => {
-    if(!live){ live = document.createTextNode(''); out.appendChild(live); }
-    live.textContent = t;
-    if(!isCR){ out.appendChild(document.createTextNode('\n')); live = null; }
-  };
+// 每 3 秒对一下开关在不在跑（页面在后台时不查）
+async function refresh(){
+  if(document.visibilityState !== 'visible') return;
+  let j;
+  try{ const r = await fetch('/api/actions'); if(!r.ok) return; j = await r.json(); }catch(e){ return; }
+  if(signature(j.actions) !== sig){ if(!anyStream()) { render(j); } return; }
+  j.actions.forEach((n, i) => {
+    const a = acts[i]; a.on = n.on; a.running = n.running; a.stopping = n.stopping;
+    const s = L(a.file);
+    if(a.unit && a.on) s.starting = false;
+    paint(i);
+    if(a.unit && a.on && s.streams === 0 && !s.stopping) follow(i);  // 别处开的（终端、另一个页面）也接上进度
+  });
+}
+setInterval(refresh, 3000);
+document.addEventListener('visibilitychange', refresh);
+
+// 往某个按钮的输出框里写一行；isCR＝进度条那种原地刷新
+function out(i, t, isCR){
+  const s = L(acts[i].file), box = $('#o'+i);
+  if(s.live) s.lines[s.lines.length-1] = t; else s.lines.push(t);
+  s.live = !!isCR;
+  if(s.lines.length > MAX_LINES){ const k = s.lines.length - MAX_LINES; s.lines.splice(0, k); s.dropped += k; }
+  box.hidden = false;
+  box.querySelector('pre').textContent = (s.dropped ? `（前面还有 ${s.dropped} 行没显示）\n` : '') + s.lines.join('\n');
+}
+function status(i, cls, txt){ const st = $(`#o${i} .st`); st.className = 'st ' + cls; st.textContent = txt; }
+
+// 跑一趟并把输出推到页面上。op：''＝执行/开始，'stop'＝停，'follow'＝只看进度
+async function stream(i, op){
+  const a = acts[i], s = L(a.file);
+  s.streams++; paint(i);
+  let lines = 0;
+  if(op !== 'follow'){ $('#o'+i).hidden = false; status(i, 'busy', op === 'stop' ? '停着…' : '跑着…'); }
   try{
-    const r = await fetch('/api/run?file='+encodeURIComponent(a.file), {method:'POST', headers:{'X-Ops':'1'}});
+    const r = await fetch('/api/run?file='+encodeURIComponent(a.file)+(op?'&op='+op:''), {method:'POST', headers:{'X-Ops':'1'}});
     if(!r.ok) throw new Error((await r.text()).trim() || ('HTTP '+r.status));
     const rd = r.body.getReader(), dec = new TextDecoder();
     let buf = '', done = null;
@@ -153,28 +222,56 @@ async function run(i){
           else if(ln.startsWith('data: ')) data += ln.slice(6);
         }
         const v = JSON.parse(data);
-        if(ev === 'line') add(v, false);
-        else if(ev === 'cr') add(v, true);
+        if(ev === 'line' || ev === 'cr'){
+          if(lines++ === 0 && op === 'follow') status(i, 'busy', '在跑，下面是进度');
+          out(i, v, ev === 'cr');
+        }
         else if(ev === 'done') done = v;
       }
     }
     if(!done) throw new Error('连接断了，没等到结果');
+    if(op === 'follow' && lines === 0) return;   // 没在跑，什么都没看到，不显示
     const secs = done.secs.toFixed(1);
-    if(done.code === 0){ st.className = 'status ok'; st.textContent = `完成，${secs} 秒`; }
-    else { st.className = 'status bad'; st.textContent = `失败（退出码 ${done.code}），${secs} 秒`; }
+    if(done.code === 0) status(i, 'ok', op === 'follow' ? '这一趟跑完了' : `完成，${secs} 秒`);
+    else status(i, 'bad', `失败（退出码 ${done.code}），${secs} 秒`);
   }catch(e){
-    st.className = 'status bad'; st.textContent = '没跑成：' + e.message;
+    if(op !== 'follow'){ status(i, 'bad', '没跑成：' + e.message); $('#o'+i).hidden = false; }
+  }finally{
+    s.streams--; paint(i);
   }
-  btn.disabled = false; btn.textContent = '执行';
+}
+function follow(i){ stream(i, 'follow'); }
+
+async function press(i){
+  const a = acts[i], s = L(a.file);
+  if(!a.unit){
+    if(a.confirm && !confirm(a.confirm)) return;
+    s.lines = []; s.dropped = 0; s.live = false;
+    await stream(i, '');
+    return;
+  }
+  if(a.on){                       // 在跑 → 停
+    s.stopping = true; paint(i);
+    out(i, '—— 点了停 ——');
+    await stream(i, 'stop');
+    s.stopping = false; a.on = false; paint(i);
+    refresh();
+  }else{                          // 没在跑 → 开始
+    s.starting = true; s.lines = []; s.dropped = 0; s.live = false; paint(i);
+    setTimeout(refresh, 1500);
+    await stream(i, '');
+    s.starting = false; paint(i);
+    refresh();
+  }
 }
 
 document.addEventListener('click', async e => {
   const b = e.target.closest('button'); if(!b) return;
-  if(b.dataset.run !== undefined){ run(+b.dataset.run); return; }
-  if(b.dataset.how !== undefined){
-    const h = $('#c'+b.dataset.how).querySelector('.how'); h.hidden = !h.hidden; return;
-  }
+  if(b.dataset.act !== undefined){ press(+b.dataset.act); return; }
+  if(b.dataset.how !== undefined){ const h = $('#h'+b.dataset.how); h.hidden = !h.hidden; return; }
+  if(b.dataset.close !== undefined){ $('#o'+b.dataset.close).hidden = true; return; }
   if(b.dataset.copy !== undefined){ copy(acts[+b.dataset.copy].cmd); return; }
+  if(b.dataset.copystop !== undefined){ copy(acts[+b.dataset.copystop].stopCmd); return; }
   if(b.dataset.src !== undefined){
     const pre = b.nextElementSibling;
     if(!pre.hidden){ pre.hidden = true; b.textContent = '看脚本'; return; }
